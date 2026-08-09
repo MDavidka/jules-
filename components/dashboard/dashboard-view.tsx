@@ -166,7 +166,7 @@ export function DashboardView({
 
           {/* Live region so polling updates are announced without stealing focus. */}
           <p aria-live="polite" className="sr-only">
-            {visibleSessions.length} sessions shown, {activeCount} currently running.
+            {visibleSessions.length} sessions shown, {activeCount} active.
           </p>
         </>
       )}

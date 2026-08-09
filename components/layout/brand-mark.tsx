@@ -2,10 +2,7 @@ import Image from "next/image";
 
 import { cn } from "@/lib/utils";
 
-/**
- * The purple Jules+ brand mark.
- * A Lucide icon over a CSS gradient - no hand-authored SVG.
- */
+/** Shared transparent brand mark used across the shell and empty states. */
 export function BrandMark({
   className,
   iconClassName,
@@ -20,7 +17,7 @@ export function BrandMark({
         alt=""
         width={48}
         height={48}
-        className={cn("h-full w-full object-contain", iconClassName)}
+        className={cn("h-full w-full object-contain mix-blend-screen", iconClassName)}
         priority
       />
     </span>
