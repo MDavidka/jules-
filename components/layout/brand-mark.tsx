@@ -1,4 +1,4 @@
-import { Bot } from "lucide-react";
+import Image from "next/image";
 
 import { cn } from "@/lib/utils";
 
@@ -14,14 +14,15 @@ export function BrandMark({
   iconClassName?: string;
 }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "inline-flex items-center justify-center rounded-2xl brand-gradient shadow-lg shadow-primary/25",
-        className,
-      )}
-    >
-      <Bot className={cn("text-white", iconClassName)} strokeWidth={2.25} />
+    <span aria-hidden="true" className={cn("inline-flex items-center justify-center", className)}>
+      <Image
+        src="/jules-octopus.jpeg"
+        alt=""
+        width={48}
+        height={48}
+        className={cn("h-full w-full object-contain", iconClassName)}
+        priority
+      />
     </span>
   );
 }

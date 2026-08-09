@@ -26,7 +26,7 @@ export function AppHeader({
   isLoadingSources,
 }: AppHeaderProps) {
   return (
-    <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-border/60 bg-background/85 px-2 pt-safe backdrop-blur-md sm:px-4">
+    <header className="sticky top-0 z-30 flex items-center gap-2 bg-background px-2 pt-safe sm:px-4">
       <div className="flex h-14 w-full items-center gap-2">
         {/* Drawer toggle: mobile/tablet only - the sidebar is permanent on desktop. */}
         <button
@@ -56,7 +56,7 @@ export function AppHeader({
         <button
           type="button"
           onClick={onOpenRepoPicker}
-          className="inline-flex min-h-11 max-w-[58%] shrink items-center gap-2 rounded-full border border-border/80 bg-secondary/70 pl-3.5 pr-1.5 text-sm text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex min-h-10 max-w-[48%] shrink items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 text-xs text-foreground shadow-sm backdrop-blur-xl transition-colors hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Change repository. Currently: </span>
           <span className="truncate text-[13px] font-medium">
@@ -67,7 +67,7 @@ export function AppHeader({
             )}
           </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground">
             <Github className="h-5 w-5 text-background" aria-hidden="true" />
           </span>
         </button>

@@ -17,7 +17,6 @@ import { SessionDetailView } from "@/components/sessions/session-detail-view";
 import { TaskComposer } from "@/components/sessions/task-composer";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
-import { SkillsView } from "@/components/skills/skills-view";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { useJulesConfig } from "@/hooks/use-jules-config";
@@ -172,7 +171,7 @@ function ConfiguredApp() {
   return (
     <div className="flex min-h-dvh bg-background">
       {/* Permanent sidebar on desktop. */}
-      <aside className="hidden w-72 shrink-0 border-r border-border/70 lg:block">
+      <aside className="hidden w-72 shrink-0 lg:block">
         <div className="sticky top-0 h-dvh">{sidebar}</div>
       </aside>
 
@@ -220,8 +219,6 @@ function ConfiguredApp() {
                 <MemoryView selectedSource={selectedSourceName} />
               ) : activeView === "automations" ? (
                 <AutomationsView />
-              ) : activeView === "skills" ? (
-                <SkillsView enabled />
               ) : activeView === "settings" ? (
                 <SettingsView />
               ) : activeView === "session" && openSessionName ? (
@@ -236,7 +233,7 @@ function ConfiguredApp() {
 
           {/* Composer: fixed to the bottom on mobile, inline on desktop. */}
           {activeView === "new-task" ? (
-            <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border/50 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:border-t-0 lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
+            <div className="fixed inset-x-0 bottom-0 z-20 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
                   source={selectedSource}
@@ -293,8 +290,7 @@ function NewTaskView({
           onClick={onOpenDashboard}
           className="mt-5 inline-flex touch-target items-center gap-2 rounded-full border border-border/80 bg-card px-4 text-sm text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-sky-400" aria-hidden="true" />
-          {activeSessionCount} task{activeSessionCount === 1 ? "" : "s"} running
+          {activeSessionCount} active task{activeSessionCount === 1 ? "" : "s"}
         </button>
       ) : null}
     </div>

@@ -127,7 +127,7 @@ export function TaskComposer({
 
       <div
         className={cn(
-          "rounded-3xl border border-border/90 bg-[hsl(0_0%_13%)] p-2.5 shadow-2xl shadow-black/40 transition-colors",
+          "rounded-3xl bg-[hsl(0_0%_13%)] p-2.5 shadow-2xl shadow-black/40 transition-colors",
           "focus-within:border-primary/40",
           disabled && "opacity-60",
         )}
@@ -236,22 +236,6 @@ export function TaskComposer({
         </div>
       </div>
 
-      <p id="task-prompt-help" className="mt-2 px-2 text-[11px] leading-relaxed text-muted-foreground">
-        {source ? (
-          <>
-            Runs on <span className="text-foreground/80">{source.fullName}</span>
-            {effectiveBranch ? (
-              <>
-                {" · "}
-                <span className="text-foreground/80">{effectiveBranch}</span>
-              </>
-            ) : null}
-            {attachedMemoryCount > 0 ? ` · ${attachedMemoryCount} memory note(s) attached` : ""}
-          </>
-        ) : (
-          "Select a repository to start a task."
-        )}
-      </p>
 
       {/* Dictation status for screen readers. */}
       <p aria-live="polite" className="sr-only">
