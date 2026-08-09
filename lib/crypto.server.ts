@@ -3,12 +3,16 @@ import "server-only";
 import crypto from "node:crypto";
 
 /**
- * AES-256-GCM encryption for the stored Jules API key.
+ * AES-256-GCM encryption for the API keys this app stores (Jules and NVIDIA).
  *
  * The symmetric key is derived from `JULES_KEY_ENCRYPTION_SECRET` using HKDF
  * (SHA-256) so that the raw env secret is never used directly as a cipher key.
  * A fresh random 12-byte IV is generated for every write, and the GCM auth tag
  * is stored separately so tampering is detected on decrypt.
+ *
+ * Each credential gets its own HKDF `info` string, so the Jules key and the NVIDIA
+ * key are encrypted under *different* derived keys even though they share one env
+ * secret. A ciphertext therefore cannot be moved from one field to the other.
  *
  * This module is server-only. Decrypted values are never logged.
  */
@@ -16,7 +20,24 @@ import crypto from "node:crypto";
 const ALGORITHM = "aes-256-gcm";
 const KEY_LENGTH = 32; // 256-bit
 const IV_LENGTH = 12; // GCM standard nonce length
-const HKDF_INFO = "jules-plus:jules-api-key:v1";
+
+/**
+ * HKDF `info` per credential. The `jules` value is frozen: changing it would make
+ * every already-stored Jules key undecryptable.
+ */
+const HKDF_INFO: Record<SecretPurpose, string> = {
+  jules: "jules-plus:jules-api-key:v1",
+  nvidia: "jules-plus:nvidia-api-key:v1",
+};
+
+/** Which credential a ciphertext belongs to. */
+export type SecretPurpose = "jules" | "nvidia";
+
+const PURPOSE_LABELS: Record<SecretPurpose, string> = {
+  jules: "Jules API key",
+  nvidia: "NVIDIA API key",
+};
+
 /**
  * Static salt is acceptable here: HKDF's security relies on the secret's
  * entropy, and a fixed salt keeps key derivation deterministic across restarts.
@@ -60,10 +81,11 @@ function getEncryptionSecret(): string {
   return secret;
 }
 
-let cachedKey: Buffer | null = null;
+const cachedKeys = new Map<SecretPurpose, Buffer>();
 
-function deriveKey(): Buffer {
-  if (cachedKey) return cachedKey;
+function deriveKey(purpose: SecretPurpose): Buffer {
+  const cached = cachedKeys.get(purpose);
+  if (cached) return cached;
 
   const secret = getEncryptionSecret();
 
@@ -82,12 +104,13 @@ function deriveKey(): Buffer {
     "sha256",
     ikm,
     Buffer.from(HKDF_SALT, "utf8"),
-    Buffer.from(HKDF_INFO, "utf8"),
+    Buffer.from(HKDF_INFO[purpose], "utf8"),
     KEY_LENGTH,
   );
 
-  cachedKey = Buffer.from(derived);
-  return cachedKey;
+  const key = Buffer.from(derived);
+  cachedKeys.set(purpose, key);
+  return key;
 }
 
 export interface EncryptedPayload {
@@ -99,13 +122,19 @@ export interface EncryptedPayload {
   authTag: string;
 }
 
-/** Encrypts a plaintext secret. Throws ConfigurationError if env is missing. */
-export function encryptSecret(plaintext: string): EncryptedPayload {
+/**
+ * Encrypts a plaintext secret. Throws ConfigurationError if env is missing.
+ * `purpose` defaults to `"jules"` so existing call sites keep their exact behaviour.
+ */
+export function encryptSecret(
+  plaintext: string,
+  purpose: SecretPurpose = "jules",
+): EncryptedPayload {
   if (typeof plaintext !== "string" || plaintext.length === 0) {
     throw new Error("Cannot encrypt an empty value.");
   }
 
-  const key = deriveKey();
+  const key = deriveKey(purpose);
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
@@ -123,8 +152,11 @@ export function encryptSecret(plaintext: string): EncryptedPayload {
  * Decrypts a previously encrypted secret.
  * Never log the return value of this function.
  */
-export function decryptSecret(payload: EncryptedPayload): string {
-  const key = deriveKey();
+export function decryptSecret(
+  payload: EncryptedPayload,
+  purpose: SecretPurpose = "jules",
+): string {
+  const key = deriveKey(purpose);
 
   try {
     const decipher = crypto.createDecipheriv(
@@ -144,8 +176,8 @@ export function decryptSecret(payload: EncryptedPayload): string {
     // Deliberately swallow the underlying error: it can leak key material
     // details. Most common cause is a rotated JULES_KEY_ENCRYPTION_SECRET.
     throw new DecryptionError(
-      "Stored Jules API key could not be decrypted. This usually means " +
-        "JULES_KEY_ENCRYPTION_SECRET changed. Delete and re-add your API key in Settings.",
+      `Stored ${PURPOSE_LABELS[purpose]} could not be decrypted. This usually means ` +
+        "JULES_KEY_ENCRYPTION_SECRET changed. Delete and re-add the key in Settings.",
     );
   }
 }
