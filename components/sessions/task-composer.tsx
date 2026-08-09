@@ -128,7 +128,7 @@ export function TaskComposer({
 
       <div
         className={cn(
-          "rounded-[2rem] border-2 border-border/70 bg-[hsl(0_0%_11.76%)] p-4 shadow-2xl shadow-black/30 transition-colors",
+          "rounded-[1.75rem] border border-border/70 bg-[hsl(0_0%_11.76%)] p-3 shadow-2xl shadow-black/30 transition-colors sm:rounded-[2rem] sm:p-4",
           disabled && "opacity-60",
         )}
       >
@@ -141,13 +141,13 @@ export function TaskComposer({
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={handleKeyDown}
-          rows={3}
+          rows={2}
           disabled={disabled || isSubmitting}
           maxLength={PROMPT_MAX_LENGTH + 100}
           aria-invalid={Boolean(validationError)}
           aria-describedby="task-prompt-help"
           placeholder="Help you write code, debug and ship production-ready work. Type / for skills & integrations."
-          className="max-h-[200px] w-full resize-none bg-transparent px-2.5 pb-3 pt-1.5 text-xl leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed sm:text-2xl"
+          className="max-h-[160px] w-full resize-none bg-transparent px-2 pb-2 pt-1 text-lg leading-relaxed text-foreground outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 disabled:cursor-not-allowed sm:max-h-[200px] sm:px-2.5 sm:pb-3 sm:pt-1.5 sm:text-2xl"
         />
 
         <div className="flex items-center gap-1.5 pt-0.5">
