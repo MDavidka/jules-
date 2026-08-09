@@ -17,6 +17,7 @@ import { SessionDetailView } from "@/components/sessions/session-detail-view";
 import { TaskComposer } from "@/components/sessions/task-composer";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { useJulesConfig } from "@/hooks/use-jules-config";
@@ -318,21 +319,21 @@ function FullScreenLoader() {
 function ConfigurationErrorScreen({ message }: { message: string }) {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-5 py-10">
-      <div className="w-full max-w-md space-y-4 rounded-2xl border border-amber-500/30 bg-amber-950/20 p-5">
-        <div className="flex items-center gap-2.5">
-          <TriangleAlert className="h-5 w-5 shrink-0 text-amber-400" aria-hidden="true" />
-          <h1 className="text-base font-semibold text-amber-50">Configuration required</h1>
-        </div>
-        <p role="alert" className="text-sm leading-relaxed text-amber-100/85 break-anywhere">
-          {message}
-        </p>
-        <div className="space-y-2 rounded-xl border border-amber-500/20 bg-black/30 p-3">
-          <p className="text-xs font-medium text-amber-100/90">Required environment variables</p>
-          <ul className="space-y-1 font-mono text-[11px] leading-relaxed text-amber-100/70">
+      <div className="w-full max-w-md space-y-4">
+        <Alert variant="destructive">
+          <TriangleAlert aria-hidden="true" />
+          <AlertTitle>Configuration required</AlertTitle>
+          <AlertDescription>
+            <p className="break-anywhere">{message}</p>
+          </AlertDescription>
+        </Alert>
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3">
+          <p className="text-xs font-medium text-foreground">Required environment variables</p>
+          <ul className="space-y-1 font-mono text-[11px] leading-relaxed text-muted-foreground">
             <li>MONGO_URI</li>
             <li>JULES_KEY_ENCRYPTION_SECRET</li>
           </ul>
-          <p className="text-[11px] leading-relaxed text-amber-100/60">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
             Copy .env.example to .env.local, fill both values, then restart the dev server.
           </p>
         </div>

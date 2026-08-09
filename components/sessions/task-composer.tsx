@@ -3,6 +3,7 @@
 import { ArrowUp, BrainCircuit, GitBranch, LoaderCircle, Mic } from "lucide-react";
 import * as React from "react";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
   SelectContent,
@@ -120,15 +121,14 @@ export function TaskComposer({
   return (
     <div className="w-full">
       {validationError ? (
-        <p role="alert" className="mb-2 px-1 text-sm text-red-400">
-          {validationError}
-        </p>
+        <Alert variant="destructive" className="mb-2">
+          <AlertDescription>{validationError}</AlertDescription>
+        </Alert>
       ) : null}
 
       <div
         className={cn(
-          "rounded-3xl bg-[hsl(0_0%_13%)] p-2.5 shadow-2xl shadow-black/40 transition-colors",
-          "focus-within:border-primary/40",
+          "rounded-3xl bg-[hsl(0_0%_13%)] p-2.5 shadow-2xl shadow-black/40",
           disabled && "opacity-60",
         )}
       >
@@ -147,7 +147,7 @@ export function TaskComposer({
           aria-invalid={Boolean(validationError)}
           aria-describedby="task-prompt-help"
           placeholder="Help you write code, debug and ship production-ready work."
-          className="max-h-[200px] w-full resize-none bg-transparent px-2.5 pb-2 pt-1.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
+          className="max-h-[200px] w-full resize-none bg-transparent px-2.5 pb-2 pt-1.5 text-base leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
         />
 
         <div className="flex items-center gap-1.5 pt-0.5">

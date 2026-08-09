@@ -18,6 +18,8 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   // Enables env(safe-area-inset-*) on notched devices.
   viewportFit: "cover",
   themeColor: "#1c1c1c",

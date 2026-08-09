@@ -1,8 +1,9 @@
 "use client";
 
-import { ChevronDown, Github, LoaderCircle, Menu, RefreshCw } from "lucide-react";
+import { ChevronDown, LoaderCircle, Menu, RefreshCw } from "lucide-react";
 import * as React from "react";
 
+import { GitHubMark } from "@/components/icons/github-mark";
 import { cn } from "@/lib/utils";
 import type { NormalizedSource } from "@/types/jules";
 
@@ -63,12 +64,12 @@ export function AppHeader({
             {isLoadingSources && !selectedSource ? (
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
-              (selectedSource?.fullName ?? "Select repo")
+              (selectedSource?.fullName.split("/").pop() ?? "Select repo")
             )}
           </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground">
-            <Github className="h-5 w-5 text-background" aria-hidden="true" />
+            <GitHubMark className="h-5 w-5 text-background" aria-hidden="true" />
           </span>
         </button>
       </div>
