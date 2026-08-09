@@ -196,10 +196,7 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView
-              activeSessionCount={activeSessions.length}
-              onOpenDashboard={() => handleNavigate("dashboard")}
-            />
+            <NewTaskView />
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -271,13 +268,7 @@ function ConfiguredApp() {
 }
 
 /** The near-empty hero state from the reference design. */
-function NewTaskView({
-  activeSessionCount,
-  onOpenDashboard,
-}: {
-  activeSessionCount: number;
-  onOpenDashboard: () => void;
-}) {
+function NewTaskView() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 pb-48 pt-10 text-center lg:pb-10">
       <BrandMark className="h-12 w-12" iconClassName="h-7 w-7" />
@@ -285,15 +276,6 @@ function NewTaskView({
         Describe a task and Jules will plan it, write the code, and report back here.
       </p>
 
-      {activeSessionCount > 0 ? (
-        <button
-          type="button"
-          onClick={onOpenDashboard}
-          className="mt-5 inline-flex touch-target items-center gap-2 rounded-full border border-border/80 bg-card px-4 text-sm text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {activeSessionCount} active task{activeSessionCount === 1 ? "" : "s"}
-        </button>
-      ) : null}
     </div>
   );
 }

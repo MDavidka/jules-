@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSessions } from "@/hooks/use-sessions";
 import { useSources } from "@/hooks/use-sources";
 import { cn, errorMessage } from "@/lib/utils";
 import type { NormalizedSource } from "@/types/jules";
@@ -33,7 +34,20 @@ export function RepositoriesView({
   onNewTask,
 }: RepositoriesViewProps) {
   const sourcesQuery = useSources({ enabled });
-  const sources = sourcesQuery.data?.items ?? [];
+  const sessionsQuery = useSessions({ enabled });
+  const sources = React.useMemo(() => sourcesQuery.data?.items ?? [], [sourcesQuery.data]);
+  const activeSourceNames = React.useMemo(() => {
+    const names = new Set(
+      (sessionsQuery.data?.items ?? [])
+        .filter((session) => session.activity === "active" || session.activity === "waiting")
+        .map((session) => session.source),
+    );
+    return names;
+  }, [sessionsQuery.data]);
+  const activeSources = React.useMemo(
+    () => sources.filter((source) => activeSourceNames.has(source.name)),
+    [activeSourceNames, sources],
+  );
 
   return (
     <div className="space-y-4">
@@ -74,24 +88,30 @@ export function RepositoriesView({
           onRetry={() => void sourcesQuery.refetch()}
           isRetrying={sourcesQuery.isFetching}
         />
-      ) : sources.length === 0 ? (
+      ) : activeSources.length === 0 ? (
         <EmptyState
           icon={Github}
-          title="No repositories connected"
-          description="Install the Jules GitHub App and grant it access to a repository, then refresh."
+          title={sources.length === 0 ? "No repositories connected" : "No active projects"}
+          description={
+            sources.length === 0
+              ? "Install the Jules GitHub App and grant it access to a repository, then refresh."
+              : "Projects appear here while they have an active or waiting session."
+          }
           action={
-            <Button size="sm" variant="outline" asChild>
-              <a href="https://jules.google.com" target="_blank" rel="noopener noreferrer">
-                <Github className="h-4 w-4" aria-hidden="true" />
-                Open Jules
-                <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
-              </a>
-            </Button>
+            sources.length === 0 ? (
+              <Button size="sm" variant="outline" asChild>
+                <a href="https://jules.google.com" target="_blank" rel="noopener noreferrer">
+                  <Github className="h-4 w-4" aria-hidden="true" />
+                  Open Jules
+                  <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
+                </a>
+              </Button>
+            ) : null
           }
         />
       ) : (
         <ul className="space-y-2">
-          {sources.map((source) => (
+          {activeSources.map((source) => (
             <RepositoryCard
               key={source.name}
               source={source}

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, LoaderCircle, Menu, RefreshCw } from "lucide-react";
+import { ChevronDown, LoaderCircle, Menu } from "lucide-react";
 import * as React from "react";
 
 import { GitHubMark } from "@/components/icons/github-mark";
@@ -42,16 +42,6 @@ export function AppHeader({
         <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-foreground lg:text-base">
           {title}
         </h1>
-
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={isRefreshing}
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-        >
-          <RefreshCw className={cn("h-[18px] w-[18px]", isRefreshing && "animate-spin")} aria-hidden="true" />
-          <span className="sr-only">Refresh data from Jules</span>
-        </button>
 
         {/* Active repository pill. */}
         <button

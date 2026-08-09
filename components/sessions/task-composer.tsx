@@ -128,7 +128,7 @@ export function TaskComposer({
 
       <div
         className={cn(
-          "rounded-3xl bg-[hsl(0_0%_13%)] p-2.5 shadow-2xl shadow-black/40",
+          "rounded-[2rem] border-2 border-border/70 bg-[hsl(0_0%_11.76%)] p-4 shadow-2xl shadow-black/30 transition-colors",
           disabled && "opacity-60",
         )}
       >
@@ -141,13 +141,13 @@ export function TaskComposer({
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={handleKeyDown}
-          rows={2}
+          rows={3}
           disabled={disabled || isSubmitting}
           maxLength={PROMPT_MAX_LENGTH + 100}
           aria-invalid={Boolean(validationError)}
           aria-describedby="task-prompt-help"
-          placeholder="Help you write code, debug and ship production-ready work."
-          className="max-h-[200px] w-full resize-none bg-transparent px-2.5 pb-2 pt-1.5 text-base leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
+          placeholder="Help you write code, debug and ship production-ready work. Type / for skills & integrations."
+          className="max-h-[200px] w-full resize-none bg-transparent px-2.5 pb-3 pt-1.5 text-xl leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed sm:text-2xl"
         />
 
         <div className="flex items-center gap-1.5 pt-0.5">
