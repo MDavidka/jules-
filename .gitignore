@@ -1,0 +1,41 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+.idea
+.vscode
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files - NEVER commit secrets
+.env
+.env*.local
+.env.local
+.env.development
+.env.production
+
+# typescript
+*.tsbuildinfo
+
+# testing
+/coverage
+
+# local verification harness (requires dev-only deps not in package.json)
+/.verify
