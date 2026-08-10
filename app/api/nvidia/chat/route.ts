@@ -7,7 +7,11 @@ import {
   readWebPage,
 } from "@/lib/nvidia-tools.server";
 import { loadNvidiaApiKey } from "@/lib/nvidia.server";
-import { DEFAULT_NVIDIA_MODEL_ID } from "@/lib/nvidia-models";
+import { errorMessage } from "@/lib/utils";
+import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
+
+const MODEL_IDS: ReadonlySet<string> = new Set(NVIDIA_MODELS.map((item) => item.id));
+const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +37,8 @@ export async function POST(request: Request) {
       attachments?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    const model = typeof body.model === "string" && body.model.includes("/") ? body.model : DEFAULT_NVIDIA_MODEL_ID;
+    const requestedModel = typeof body.model === "string" ? body.model : "";
+    const model = MODEL_IDS.has(requestedModel) ? requestedModel : DEFAULT_NVIDIA_MODEL_ID;
     if (!prompt) return jsonError("Type a message to send.", 422, { code: "VALIDATION_ERROR" });
 
     const apiKey = await loadNvidiaApiKey();
@@ -51,6 +56,14 @@ export async function POST(request: Request) {
       : [];
     const source = typeof body.source === "string" ? body.source : "";
     const attachments = normalizeAttachments(body.attachments);
+    const invalidImage = attachments.find((attachment) => attachment.type.startsWith("image/") && !isSafeImageDataUrl(attachment.dataUrl));
+    if (invalidImage) {
+      return jsonError(`The image "${invalidImage.name}" could not be prepared. Use a PNG, JPG, or WEBP image under 4 MB.`, 422, { code: "IMAGE_PREPARATION_FAILED" });
+    }
+    const oversizedImage = attachments.find((attachment) => attachment.type.startsWith("image/") && (attachment.dataUrl?.length ?? 0) > MAX_IMAGE_DATA_URL_LENGTH);
+    if (oversizedImage) {
+      return jsonError(`The image "${oversizedImage.name}" is too large after compression.`, 413, { code: "IMAGE_TOO_LARGE" });
+    }
 
     const repositoryInputs = [...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)];
     const uniqueRepositoryInputs = [...new Set(repositoryInputs)];
@@ -158,34 +171,43 @@ async function describeImages(attachments: IncomingAttachment[], apiKey: string)
   if (imageParts.length === 0) return "";
 
   try {
-    const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "nvidia/nemotron-nano-12b-v2-vl",
-        stream: false,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: "Describe the attached image(s) for a software engineering assistant. Include visible text, errors, UI details, and relevant code or diagrams. Be concise and factual." },
-            ...imageParts,
-          ],
-        }],
-        temperature: 0.1,
-        max_tokens: 1200,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    let response: Response;
+    try {
+      response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: "nvidia/nemotron-nano-12b-v2-vl",
+          stream: false,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: "Describe the attached image(s) for a software engineering assistant. Include visible text, errors, UI details, and relevant code or diagrams. Be concise and factual." },
+              ...imageParts,
+            ],
+          }],
+          temperature: 0.1,
+          max_tokens: 1200,
+        }),
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
-      return `Image analysis was unavailable for ${imageParts.length} attached image${imageParts.length === 1 ? "" : "s"}; continue with the user's text and attachment names.`;
+      const details = await response.text().catch(() => "");
+      throw new Error(`Vision model request failed (${response.status})${details ? `: ${details.slice(0, 240)}` : ""}`);
     }
     const data = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
     const description = data.choices?.[0]?.message?.content;
     if (typeof description !== "string" || !description.trim()) {
-      return "The image analyzer returned no description; continue with the user's text and attachment names.";
+      throw new Error("Vision model returned no description.");
     }
     return `Image analysis from the visual model:\n${description.trim().slice(0, 20_000)}`;
-  } catch {
-    return `Image analysis could not be completed for ${imageParts.length} attached image${imageParts.length === 1 ? "" : "s"}; continue with the user's text and attachment names.`;
+  } catch (error) {
+    return `Image analysis unavailable: ${errorMessage(error, "the visual model could not load the image")}. The main assistant can still answer from the prompt and attached filename.`;
   }
 }
 
@@ -200,7 +222,7 @@ function normalizeAttachments(value: unknown): IncomingAttachment[] {
       name: item.name.slice(0, 200),
       type: item.type.slice(0, 120),
       content: typeof item.content === "string" ? item.content.slice(0, 200_000) : undefined,
-      dataUrl: typeof item.dataUrl === "string" ? item.dataUrl.slice(0, 6_000_000) : undefined,
+      dataUrl: typeof item.dataUrl === "string" ? item.dataUrl : undefined,
     }));
 }
 

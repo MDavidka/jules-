@@ -2,7 +2,14 @@
 
 import useSWR from "swr";
 
-export type NvidiaModel = { id: string; label: string; provider: string; icon: string };
+export type NvidiaModel = {
+  id: string;
+  label: string;
+  provider: string;
+  icon: string;
+  iconUrl?: string;
+  iconFallback: string;
+};
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
 
 export function useNvidiaModels() {

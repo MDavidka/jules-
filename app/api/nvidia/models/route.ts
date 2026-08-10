@@ -23,7 +23,14 @@ export async function GET() {
           .filter((item: { id?: unknown }) => typeof item.id === "string" && CURATED_BY_ID.has(item.id))
           .map((item: { id: string }) => {
             const curated = CURATED_BY_ID.get(item.id)!;
-            return { id: item.id, label: curated.label, provider: curated.provider, icon: curated.icon };
+            return {
+              id: item.id,
+              label: curated.label,
+              provider: curated.provider,
+              icon: curated.icon,
+              iconUrl: curated.iconUrl,
+              iconFallback: curated.iconFallback,
+            };
           })
       : [];
     return NextResponse.json({ models: models.length ? models : NVIDIA_MODELS, live: true }, { headers: { "Cache-Control": "private, max-age=300" } });

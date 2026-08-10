@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowUp, Bot, FileText, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, FileImage, FileText, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
 import type { NvidiaModel } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ModelIcon } from "@/components/ui/model-icon";
 import {
   Select,
   SelectContent,
@@ -19,11 +20,14 @@ import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from "@/lib/validators";
 import type { NormalizedSource } from "@/types/jules";
 
 export interface AgentAttachment {
+  id: string;
   name: string;
   type: string;
   size: number;
   content?: string;
   dataUrl?: string;
+  status?: "processing" | "ready" | "error";
+  error?: string;
 }
 
 interface TaskComposerProps {
@@ -55,6 +59,7 @@ export function TaskComposer({
 }: TaskComposerProps) {
   const [prompt, setPrompt] = React.useState("");
   const [attachments, setAttachments] = React.useState<AgentAttachment[]>([]);
+  const [isProcessingFiles, setIsProcessingFiles] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -79,35 +84,52 @@ export function TaskComposer({
   const branches = source?.branches ?? [];
   const effectiveBranch = branch ?? source?.defaultBranch ?? null;
   const trimmedLength = prompt.trim().length;
+  const selectedModel = models.find((item) => item.id === model) ?? models[0];
   const isOverLimit = trimmedLength > PROMPT_MAX_LENGTH;
-  const canSubmit = !disabled && !isSubmitting && trimmedLength >= PROMPT_MIN_LENGTH && !isOverLimit;
+  const hasAttachmentError = attachments.some((attachment) => attachment.status === "error");
+  const canSubmit = !disabled && !isSubmitting && !isProcessingFiles && !hasAttachmentError && trimmedLength >= PROMPT_MIN_LENGTH && !isOverLimit;
 
   const readImageAsDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const image = new Image();
-        image.onload = () => {
-          const maxDimension = 1600;
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      const timeout = window.setTimeout(() => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error(`Timed out while loading ${file.name}.`));
+      }, 15_000);
+      const finish = (error?: Error) => {
+        window.clearTimeout(timeout);
+        URL.revokeObjectURL(objectUrl);
+        if (error) reject(error);
+      };
+      image.onload = () => {
+        try {
+          const maxDimension = 1280;
           const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
           const canvas = document.createElement("canvas");
-          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          canvas.width = Math.max(32, Math.round(image.naturalWidth * scale));
+          canvas.height = Math.max(32, Math.round(image.naturalHeight * scale));
           const context = canvas.getContext("2d");
           if (!context) {
-            reject(new Error(`Could not process ${file.name}.`));
+            finish(new Error(`Could not process ${file.name}.`));
             return;
           }
           context.fillStyle = "#ffffff";
           context.fillRect(0, 0, canvas.width, canvas.height);
           context.drawImage(image, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL("image/jpeg", 0.82));
-        };
-        image.onerror = () => reject(new Error(`Could not decode ${file.name}.`));
-        image.src = String(reader.result);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.76);
+          if (dataUrl.length > 4_500_000) {
+            finish(new Error(`${file.name} is still too large after compression.`));
+            return;
+          }
+          finish();
+          resolve(dataUrl);
+        } catch {
+          finish(new Error(`Could not process ${file.name}.`));
+        }
       };
-      reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
-      reader.readAsDataURL(file);
+      image.onerror = () => finish(new Error(`Could not decode ${file.name}. Use PNG, JPG, or WEBP.`));
+      image.src = objectUrl;
     });
 
   const readAsDataUrl = (file: File) =>
@@ -120,31 +142,47 @@ export function TaskComposer({
 
   const handleFiles = async (fileList: FileList | null) => {
     if (!fileList?.length) return;
-    const next: AgentAttachment[] = [];
-    for (const file of Array.from(fileList).slice(0, 4)) {
+    const selectedFiles = Array.from(fileList).slice(0, 4);
+    const pending = selectedFiles.map<AgentAttachment>((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      name: file.name,
+      type: file.type || "application/octet-stream",
+      size: file.size,
+      status: "processing",
+    }));
+    setAttachments((current) => [...current, ...pending].slice(0, 4));
+    setIsProcessingFiles(true);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+
+    for (const [index, file] of selectedFiles.entries()) {
+      const pendingAttachment = pending[index];
+      if (!pendingAttachment) continue;
       if (file.size > 4 * 1024 * 1024) {
-        toast({ title: "File is too large", description: `${file.name} must be smaller than 4 MB.`, variant: "error" });
+        const message = `${file.name} must be smaller than 4 MB.`;
+        setAttachments((current) => current.map((attachment) => attachment.id === pendingAttachment.id ? { ...attachment, status: "error", error: message } : attachment));
+        toast({ title: "File is too large", description: message, variant: "error" });
         continue;
       }
       try {
         const isImage = file.type.startsWith("image/");
         const isText = file.type.startsWith("text/") || /\.(md|mdx|json|csv|ts|tsx|js|jsx|py|go|rs|java|yml|yaml|toml|xml|html|css)$/i.test(file.name);
-        next.push({
-          name: file.name,
-          type: file.type || "application/octet-stream",
-          size: file.size,
+        const processed: AgentAttachment = {
+          ...pendingAttachment,
+          status: "ready",
           ...(isImage
             ? { dataUrl: await readImageAsDataUrl(file) }
             : isText
               ? { content: (await file.text()).slice(0, 200_000) }
               : { dataUrl: await readAsDataUrl(file) }),
-        });
+        };
+        setAttachments((current) => current.map((attachment) => attachment.id === pendingAttachment.id ? processed : attachment));
       } catch (error) {
-        toast({ title: "Could not attach file", description: errorMessage(error), variant: "error" });
+        const message = errorMessage(error, `Could not attach ${file.name}.`);
+        setAttachments((current) => current.map((attachment) => attachment.id === pendingAttachment.id ? { ...attachment, status: "error", error: message } : attachment));
+        toast({ title: "Could not attach file", description: message, variant: "error" });
       }
     }
-    setAttachments((current) => [...current, ...next].slice(0, 4));
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setIsProcessingFiles(false);
   };
 
   const handleSubmit = async () => {
@@ -158,9 +196,17 @@ export function TaskComposer({
       setValidationError(`Keep the prompt under ${PROMPT_MAX_LENGTH.toLocaleString()} characters.`);
       return;
     }
+    if (isProcessingFiles) {
+      setValidationError("Wait for the selected files to finish preparing.");
+      return;
+    }
+    if (hasAttachmentError) {
+      setValidationError("Remove the file that failed to load before sending.");
+      return;
+    }
 
     try {
-      await onSubmit(prompt.trim(), attachments);
+      await onSubmit(prompt.trim(), attachments.filter((attachment) => attachment.status !== "error"));
       setPrompt("");
       setAttachments([]);
       setValidationError(null);
@@ -205,6 +251,26 @@ export function TaskComposer({
           disabled && "opacity-60",
         )}
       >
+        {attachments.length > 0 ? (
+          <ul className="mb-3 flex flex-wrap gap-2" aria-label="Attached files">
+            {attachments.map((attachment) => (
+              <li key={attachment.id} className="flex max-w-full items-center gap-2 rounded-lg border border-border/70 bg-secondary/60 px-2 py-1.5 text-xs text-foreground">
+                {attachment.status === "processing" ? (
+                  <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden="true" />
+                ) : attachment.status === "error" ? (
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
+                ) : attachment.dataUrl && attachment.type.startsWith("image/") ? (
+                  <AttachmentThumbnail attachment={attachment} />
+                ) : <FileText className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
+                <span className="max-w-[12rem] truncate" title={attachment.error ?? attachment.name}>{attachment.status === "processing" ? `Preparing ${attachment.name}…` : attachment.error ?? attachment.name}</span>
+                <button type="button" onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label={`Remove ${attachment.name}`}>
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
         <label htmlFor="task-prompt" className="sr-only">
           Describe the task for Jules
         </label>
@@ -227,27 +293,11 @@ export function TaskComposer({
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*,.txt,.md,.mdx,.json,.csv,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.yml,.yaml,.toml,.xml,.html,.css,.pdf"
+          accept="image/png,image/jpeg,image/webp,.txt,.md,.mdx,.json,.csv,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.yml,.yaml,.toml,.xml,.html,.css,.pdf"
           onChange={(event) => void handleFiles(event.target.files)}
           className="sr-only"
           tabIndex={-1}
         />
-
-        {attachments.length > 0 ? (
-          <ul className="mb-2 flex flex-wrap gap-2" aria-label="Attached files">
-            {attachments.map((attachment, index) => (
-              <li key={`${attachment.name}-${index}`} className="flex max-w-full items-center gap-2 rounded-lg border border-border/70 bg-secondary/60 px-2 py-1.5 text-xs text-foreground">
-                {attachment.dataUrl && attachment.type.startsWith("image/") ? (
-                  <img src={attachment.dataUrl} alt="" className="h-7 w-7 rounded object-cover" />
-                ) : <FileText className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
-                <span className="max-w-[12rem] truncate">{attachment.name}</span>
-                <button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label={`Remove ${attachment.name}`}>
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
 
         <div className="flex items-center gap-1.5 pt-0.5">
           <button
@@ -262,8 +312,8 @@ export function TaskComposer({
 
           <Select value={model} onValueChange={onModelChange} disabled={disabled}>
             <SelectTrigger aria-label="Model" className="h-10 min-h-10 w-auto max-w-[13rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
-              <Bot className="size-4 shrink-0 text-primary" aria-hidden="true" />
-              <SelectValue placeholder="DeepSeek V4 Pro" />
+              {selectedModel ? <ModelIcon model={selectedModel} /> : null}
+              <SelectValue placeholder="Select model" />
             </SelectTrigger>
             <SelectContent className="w-[min(18rem,90vw)]">
               {models.map((item) => (
@@ -272,7 +322,7 @@ export function TaskComposer({
                   value={item.id}
                   extra={
                     <span className="flex items-center gap-1.5">
-                      <Bot className="size-4 text-primary" aria-hidden="true" />
+                      <ModelIcon model={item} />
                       <span className="text-xs text-muted-foreground">{item.provider}</span>
                     </span>
                   }
@@ -329,5 +379,23 @@ export function TaskComposer({
         {dictation.isListening ? "Listening. Speak your task." : ""}
       </p>
     </div>
+  );
+}
+
+
+function AttachmentThumbnail({ attachment }: { attachment: AgentAttachment }) {
+  const [hasError, setHasError] = React.useState(false);
+
+  if (hasError || !attachment.dataUrl) {
+    return <FileImage className="h-7 w-7 shrink-0 rounded text-muted-foreground" aria-hidden="true" />;
+  }
+
+  return (
+    <img
+      src={attachment.dataUrl}
+      alt=""
+      className="h-7 w-7 shrink-0 rounded object-cover"
+      onError={() => setHasError(true)}
+    />
   );
 }
