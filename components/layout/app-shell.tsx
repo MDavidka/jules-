@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
+import { ChecksView } from "@/components/checks/checks-view";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { AppHeader } from "@/components/layout/app-header";
 import { BrandMark } from "@/components/layout/brand-mark";
@@ -16,6 +17,7 @@ import { MemoryView } from "@/components/memory/memory-view";
 import { RepoPickerSheet } from "@/components/repositories/repo-picker-sheet";
 import { RepositoriesView } from "@/components/repositories/repositories-view";
 import { SessionDetailView } from "@/components/sessions/session-detail-view";
+import { JulesFixProposalCard, type JulesFixProposal } from "@/components/sessions/jules-fix-proposal-card";
 import { TaskComposer, type AgentAttachment } from "@/components/sessions/task-composer";
 import { AgentActivityIndicator, isAgentActivity, type AgentActivity } from "@/components/ui/dot-matrix-loader";
 import { MarkdownContent } from "@/components/ui/markdown-content";
@@ -59,6 +61,12 @@ export function AppShell() {
 
 const LAST_SELECTED_SOURCE_KEY = "jules-plus:last-selected-source";
 
+type AssistantMessage = {
+  role: "user" | "assistant";
+  content: string;
+  julesProposal?: JulesFixProposal;
+};
+
 function ConfiguredApp() {
   const queryClient = useQueryClient();
 
@@ -75,7 +83,7 @@ function ConfiguredApp() {
     const orderedModels = [defaultModel, ...liveModels, selectedModel].filter(Boolean);
     return [...new Map(orderedModels.map((item) => [item!.id, item!])).values()];
   }, [model, nvidiaModelsQuery.models]);
-  const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [assistantMessages, setAssistantMessages] = React.useState<AssistantMessage[]>([]);
   const [assistantPending, setAssistantPending] = React.useState(false);
   const [assistantActivity, setAssistantActivity] = React.useState<AgentActivity>("thinking");
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
@@ -183,7 +191,8 @@ function ConfiguredApp() {
         body: JSON.stringify({
           prompt: `${prompt}${memoryBlock}`,
           model: model || DEFAULT_NVIDIA_MODEL_ID,
-          source: selectedSource?.githubUrl ?? selectedSource?.fullName ?? selectedSourceName,
+          source: selectedSource?.name ?? selectedSourceName,
+          branch: branch ?? selectedSource?.defaultBranch ?? undefined,
           attachments,
           history: assistantMessages,
         }),
@@ -214,7 +223,7 @@ function ConfiguredApp() {
         const trimmed = line.trim();
         if (!trimmed) return;
 
-        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown };
+        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown };
         try {
           event = JSON.parse(trimmed);
         } catch {
@@ -233,6 +242,21 @@ function ConfiguredApp() {
             break;
           case "memory":
             if (typeof event.saved === "number") savedMemoryCount += event.saved;
+            break;
+          case "jules_fix_proposal": {
+            const proposal = parseJulesFixProposal(event.proposal);
+            if (proposal) {
+              setAssistantMessages((current) => {
+                const next = [...current];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") next[next.length - 1] = { ...last, julesProposal: proposal };
+                return next;
+              });
+            }
+            break;
+          }
+          case "done":
+            setAssistantActivity("done");
             break;
           case "error":
             streamError = typeof event.message === "string" ? event.message : "The assistant request failed.";
@@ -324,7 +348,7 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} />
+            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -345,6 +369,8 @@ function ConfiguredApp() {
                 <MemoryView selectedSource={selectedSourceName} />
               ) : activeView === "automations" ? (
                 <AutomationsView />
+              ) : activeView === "checks" ? (
+                <ChecksView selectedSource={selectedSource} />
               ) : activeView === "settings" ? (
                 <SettingsView />
               ) : activeView === "session" && openSessionName ? (
@@ -390,26 +416,48 @@ function ConfiguredApp() {
   );
 }
 
-/** The near-empty hero state from the reference design. */
-function NewTaskView({ messages, isStreaming, activity, composerHeight }: { messages: Array<{ role: "user" | "assistant"; content: string }>; isStreaming: boolean; activity: AgentActivity; composerHeight: number }) {
+function NewTaskView({
+  messages,
+  isStreaming,
+  activity,
+  composerHeight,
+  onSessionCreated,
+}: {
+  messages: AssistantMessage[];
+  isStreaming: boolean;
+  activity: AgentActivity;
+  composerHeight: number;
+  onSessionCreated: (sessionName: string) => void;
+}) {
   return (
     <div
       className="flex flex-1 flex-col overflow-y-auto px-4 pb-[calc(var(--composer-height)+1.5rem)] pt-6 sm:px-6 lg:pb-10"
       style={{ "--composer-height": `${Math.max(composerHeight, 208)}px` } as React.CSSProperties}
     >
       {messages.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
+        <div className="flex flex-1 flex-col items-center justify-center text-center">
+          <BrandMark className="h-12 w-12" iconClassName="h-7 w-7" />
+          <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">
+            Tell the assistant what you are trying to build or fix. It will gather context and suggest the next action.
+          </p>
+        </div>
       ) : (
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
           {messages.map((message, index) => (
-            <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] px-5 py-3 text-base leading-relaxed text-foreground"}>
+            <div
+              key={`${message.role}-${index}`}
+              className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] px-5 py-3 text-base leading-relaxed text-foreground"}
+            >
               {message.role === "assistant" ? (
-                // While the reply is still empty the status row stands in for it.
-                index === messages.length - 1 && isStreaming && !message.content ? (
-                  <AgentActivityIndicator activity={activity} />
-                ) : (
-                  <MarkdownContent>{message.content}</MarkdownContent>
-                )
+                <>
+                  {message.content ? <MarkdownContent>{message.content}</MarkdownContent> : null}
+                  {message.julesProposal ? (
+                    <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
+                  ) : null}
+                  {index === messages.length - 1 && isStreaming ? (
+                    <AgentActivityIndicator activity={activity} className="mt-3" />
+                  ) : null}
+                </>
               ) : (
                 <p className="whitespace-pre-wrap">{message.content}</p>
               )}
@@ -419,6 +467,19 @@ function NewTaskView({ messages, isStreaming, activity, composerHeight }: { mess
       )}
     </div>
   );
+}
+
+function parseJulesFixProposal(value: unknown): JulesFixProposal | null {
+  if (!value || typeof value !== "object") return null;
+  const proposal = value as Record<string, unknown>;
+  if (typeof proposal.prompt !== "string" || typeof proposal.source !== "string" || typeof proposal.title !== "string") return null;
+  if (!proposal.source.startsWith("sources/github/")) return null;
+  return {
+    prompt: proposal.prompt,
+    source: proposal.source,
+    title: proposal.title,
+    ...(typeof proposal.branch === "string" && proposal.branch ? { branch: proposal.branch } : {}),
+  };
 }
 
 

@@ -1,10 +1,15 @@
+import "server-only";
+
 const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
 const USER_AGENT = "jules-plus research reader";
 const REQUEST_TIMEOUT_MS = 15_000;
-const GITHUB_API_HEADERS = {
+const GITHUB_API_HEADERS: Record<string, string> = {
   Accept: "application/vnd.github+json",
   "User-Agent": "jules-plus",
-} as const;
+  ...(process.env.GITHUB_API_KEY?.trim()
+    ? { Authorization: `Bearer ${process.env.GITHUB_API_KEY.trim()}` }
+    : {}),
+};
 
 const README_FILES = ["README.md", "readme.md", "README.txt", "README"];
 const MANIFEST_FILES = [
@@ -76,16 +81,16 @@ export async function inspectPublicRepository(source: string) {
 
   const [repoResponse, apiReadmeResponse, ...probeResponses] = await Promise.all([
     fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "jules-plus" },
+      headers: GITHUB_API_HEADERS,
       next: { revalidate: 300 },
     }),
     fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/readme`, {
-      headers: { Accept: "application/vnd.github.raw+json", "User-Agent": "jules-plus" },
+      headers: { ...GITHUB_API_HEADERS, Accept: "application/vnd.github.raw+json" },
       next: { revalidate: 300 },
     }),
     ...probePaths.map((path) =>
       fetch(`${rawBase}/${path}`, {
-        headers: { "User-Agent": "jules-plus" },
+        headers: GITHUB_API_HEADERS,
         next: { revalidate: 300 },
       }),
     ),

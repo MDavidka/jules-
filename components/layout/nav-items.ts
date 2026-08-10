@@ -4,6 +4,7 @@ import {
   Github,
   House,
   SquarePen,
+  SquareTerminal,
   type LucideIcon,
 } from "lucide-react";
 
@@ -13,6 +14,7 @@ export type ViewId =
   | "repositories"
   | "automations"
   | "dashboard"
+  | "checks"
   | "settings"
   | "session";
 
@@ -29,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "repositories", label: "Repositories", icon: Github },
   { id: "automations", label: "Automations", icon: Clock3 },
   { id: "dashboard", label: "Dashboard", icon: House },
+  { id: "checks", label: "SSH / Checks", icon: SquareTerminal },
 ];
 
 export const VIEW_TITLES: Record<ViewId, string> = {
@@ -37,6 +40,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   repositories: "Repositories",
   automations: "Automations",
   dashboard: "Dashboard",
+  checks: "SSH / Checks",
   settings: "Settings",
   session: "Task",
 };

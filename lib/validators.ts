@@ -89,6 +89,19 @@ export const createSessionSchema = z.object({
 
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 
+/* -------------------------------------------------------------------------- */
+/*                              Repository checks                             */
+/* -------------------------------------------------------------------------- */
+
+export const CHECK_COMMANDS = ["test", "typecheck", "lint", "build"] as const;
+
+export const checkCommandSchema = z.object({
+  command: z.enum(CHECK_COMMANDS),
+  source: sourceResourceNameSchema,
+});
+
+export type CheckCommandInput = z.infer<typeof checkCommandSchema>;
+
 export const sendMessageSchema = z.object({
   prompt: z
     .string({ required_error: "Type a message to send." })

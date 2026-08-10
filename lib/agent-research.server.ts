@@ -9,9 +9,9 @@ import { NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import type { AgentActivity } from "@/lib/agent-activity";
 
 /** Hard ceiling on tool-calling rounds, so a confused model cannot loop forever. */
-const MAX_STEPS = 6;
-const MAX_TOOL_CALLS_PER_STEP = 3;
-const STEP_TIMEOUT_MS = 45_000;
+const MAX_STEPS = 4;
+const MAX_TOOL_CALLS_PER_STEP = 2;
+const STEP_TIMEOUT_MS = 25_000;
 
 const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
   search_web: "searching",
@@ -165,7 +165,7 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
 
   try {
     for (let step = 0; step < MAX_STEPS; step += 1) {
-      onActivity?.(step === 0 ? "thinking" : "working");
+      onActivity?.(step === 0 ? "thinking" : "reading");
 
       const choice = await requestCompletion({ apiKey, model, messages });
       if (!choice) break;
@@ -234,7 +234,7 @@ async function requestCompletion({
         tools: TOOL_DEFINITIONS,
         tool_choice: "auto",
         temperature: 0.1,
-        max_tokens: 900,
+        max_tokens: 700,
       }),
     });
     if (!response.ok) return null;

@@ -39,6 +39,7 @@ export async function POST(request: Request) {
       model?: unknown;
       history?: unknown;
       source?: unknown;
+      branch?: unknown;
       attachments?: unknown;
       deepResearch?: unknown;
     };
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
           .map((item) => ({ role: item.role, content: item.content.slice(0, 20_000) }))
       : [];
     const source = typeof body.source === "string" ? body.source : "";
+    const branch = typeof body.branch === "string" && body.branch.trim() ? body.branch.trim() : undefined;
     const attachments = normalizeAttachments(body.attachments);
     const invalidImage = attachments.find((attachment) => attachment.type.startsWith("image/") && !isSafeImageDataUrl(attachment.dataUrl));
     if (invalidImage) {
@@ -71,7 +73,7 @@ export async function POST(request: Request) {
       return jsonError(`The image "${oversizedImage.name}" is too large after compression.`, 413, { code: "IMAGE_TOO_LARGE" });
     }
 
-    const deepResearch = body.deepResearch !== false;
+    const deepResearch = body.deepResearch === true || shouldRunDeepResearch(prompt);
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
@@ -85,6 +87,18 @@ export async function POST(request: Request) {
         try {
           sendStatus("thinking");
 
+          if (shouldOfferJulesFix(prompt, source)) {
+            send({
+              type: "jules_fix_proposal",
+              proposal: {
+                prompt,
+                source,
+                branch,
+                title: buildFixTitle(prompt),
+              },
+            });
+          }
+
           const fileContext = attachments
             .filter((attachment) => attachment.content)
             .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
@@ -96,18 +110,20 @@ export async function POST(request: Request) {
             imageContext = await describeImages(attachments, apiKey);
           }
 
-          // Quick pass: always pull context for repositories named in the prompt.
+          // Keep the fast path fast. Deep research already has repository tools,
+          // so do not fetch the same README/manifests a second time first.
           const repositoryInputs = [...new Set([...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)])];
           let research = "";
-          if (repositoryInputs.length > 0) {
+          if (repositoryInputs.length > 0 && !deepResearch) {
             sendStatus("inspecting");
             const repositoryResearch = await Promise.all(
-              repositoryInputs.slice(0, 4).map(async (repository) => inspectPublicRepository(repository)),
+              repositoryInputs.slice(0, 2).map(async (repository) => inspectPublicRepository(repository)),
             );
             research = `Repository context:\n${repositoryResearch.join("\n\n")}`;
           }
 
-          // Deep pass: let the agent search the web and walk the repo itself.
+          // Deep traversal is opt-in by wording (or an explicit API flag),
+          // avoiding several slow tool rounds for ordinary questions.
           let deepFindings = "";
           if (deepResearch) {
             deepFindings = await runDeepResearch({
@@ -195,6 +211,7 @@ export async function POST(request: Request) {
             if (saved > 0) send({ type: "memory", saved });
           }
 
+          sendStatus("done");
           send({ type: "done" });
           controller.close();
         } catch (error) {
@@ -284,4 +301,18 @@ function normalizeAttachments(value: unknown): IncomingAttachment[] {
 
 function isSafeImageDataUrl(value: string | undefined): value is string {
   return typeof value === "string" && /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(value);
+}
+
+
+function shouldOfferJulesFix(prompt: string, source: string) {
+  return Boolean(source.startsWith("sources/github/") && /\b(fix|bug|broken|error|failing|failure|issue|debug|repair|regression|not working)\b/i.test(prompt));
+}
+
+function shouldRunDeepResearch(prompt: string) {
+  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through)\b/i.test(prompt);
+}
+
+function buildFixTitle(prompt: string) {
+  const compact = prompt.replace(/\s+/g, " ").trim();
+  return `Fix: ${compact.slice(0, 160)}`;
 }

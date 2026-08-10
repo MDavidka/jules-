@@ -10,6 +10,7 @@ export const AGENT_ACTIVITIES = [
   "inspecting",
   "saving",
   "working",
+  "done",
 ] as const;
 
 export type AgentActivity = (typeof AGENT_ACTIVITIES)[number];
@@ -20,7 +21,8 @@ export const ACTIVITY_LABELS: Record<AgentActivity, string> = {
   searching: "searching the web..",
   inspecting: "reading the repo..",
   saving: "saving to database..",
-  working: "working hard..",
+  working: "writing the answer..",
+  done: "done",
 };
 
 export function isAgentActivity(value: unknown): value is AgentActivity {
