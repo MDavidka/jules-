@@ -1,6 +1,7 @@
 "use client";
 
 import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { NVIDIA_MODELS, type NvidiaModelId } from "@/lib/nvidia-models";
 import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
@@ -22,7 +23,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { useJulesConfig } from "@/hooks/use-jules-config";
 import { useMemory } from "@/hooks/use-memory";
-import { useCreateSession, useSessions } from "@/hooks/use-sessions";
+import { useSessions } from "@/hooks/use-sessions";
 import { useSource, useSources } from "@/hooks/use-sources";
 import { ApiError } from "@/lib/api-client";
 import { errorMessage } from "@/lib/utils";
@@ -60,6 +61,9 @@ function ConfiguredApp() {
   const [activeView, setActiveView] = React.useState<ViewId>("new-task");
   const [selectedSourceName, setSelectedSourceName] = React.useState<string | null>(null);
   const [branch, setBranch] = React.useState<string | null>(null);
+  const [model, setModel] = React.useState<NvidiaModelId>(NVIDIA_MODELS[0].id);
+  const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [assistantPending, setAssistantPending] = React.useState(false);
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
 
   const [navOpen, setNavOpen] = React.useState(false);
@@ -97,8 +101,6 @@ function ConfiguredApp() {
     [memoryQuery.data, selectedSourceName],
   );
 
-  const createSession = useCreateSession();
-
   // Keep the sessions list warm so the header/dashboard reflect live state.
   const sessionsQuery = useSessions({ enabled: true });
   const activeSessions = (sessionsQuery.data?.items ?? []).filter(
@@ -120,30 +122,14 @@ function ConfiguredApp() {
   };
 
   const handleSubmitTask = async (prompt: string) => {
-    if (!selectedSource) throw new Error("Pick a repository first.");
-
-    // Append pinned memory so the agent gets the saved project context.
-    const memoryBlock =
-      pinnedNotes.length > 0
-        ? `\n\n---\nProject memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}`
-        : "";
-
-    const result = await createSession.mutateAsync({
-      prompt: `${prompt}${memoryBlock}`,
-      source: selectedSource.name,
-      ...(branch ?? selectedSource.defaultBranch
-        ? { branch: branch ?? selectedSource.defaultBranch ?? undefined }
-        : {}),
-    });
-
-    toast({
-      // Jules is asynchronous: this only confirms submission.
-      title: "Task submitted to Jules",
-      description: "Following live progress now.",
-      variant: "success",
-    });
-
-    handleOpenSession(result.session.name);
+    const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
+    setAssistantPending(true);
+    const response = await fetch("/api/nvidia/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${prompt}${memoryBlock}`, model, history: assistantMessages }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message ?? "NVIDIA assistant request failed.");
+    setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: data.message }]);
+    setAssistantPending(false);
+    toast({ title: "NVIDIA assistant replied", description: "Your project context is being gathered.", variant: "success" });
   };
 
   const handleRefresh = () => {
@@ -196,7 +182,7 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView />
+            <NewTaskView messages={assistantMessages} />
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -237,8 +223,10 @@ function ConfiguredApp() {
                   source={selectedSource}
                   branch={branch}
                   onBranchChange={setBranch}
+                  model={model}
+                  onModelChange={setModel}
                   onSubmit={handleSubmitTask}
-                  isSubmitting={createSession.isPending}
+                  isSubmitting={assistantPending}
                   attachedMemoryCount={pinnedNotes.length}
                   onOpenMemory={() => setMemorySheetOpen(true)}
                   disabled={sources.length === 0 && !sourcesQuery.isPending}
@@ -268,14 +256,12 @@ function ConfiguredApp() {
 }
 
 /** The near-empty hero state from the reference design. */
-function NewTaskView() {
+function NewTaskView({ messages }: { messages: Array<{ role: "user" | "assistant"; content: string }> }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 pb-48 pt-10 text-center lg:pb-10">
-      <BrandMark className="h-12 w-12" iconClassName="h-7 w-7" />
-      <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">
-        Describe a task and Jules will plan it, write the code, and report back here.
-      </p>
-
+    <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-48 pt-6 sm:px-6 lg:pb-10">
+      {messages.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the NVIDIA assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
+      ) : <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] whitespace-pre-wrap px-5 py-3 text-base leading-relaxed text-foreground"}>{message.content}</div>)}</div>}
     </div>
   );
 }

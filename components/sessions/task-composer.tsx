@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUp, BrainCircuit, GitBranch, LoaderCircle, Mic } from "lucide-react";
+import { ArrowUp, BrainCircuit, LoaderCircle, Mic, Sparkles } from "lucide-react";
+import { NVIDIA_MODELS, type NvidiaModelId } from "@/lib/nvidia-models";
 import * as React from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -21,6 +22,8 @@ interface TaskComposerProps {
   source: NormalizedSource | null;
   branch: string | null;
   onBranchChange: (branch: string) => void;
+  model: NvidiaModelId;
+  onModelChange: (model: NvidiaModelId) => void;
   onSubmit: (prompt: string) => Promise<void>;
   isSubmitting: boolean;
   /** Number of pinned memory notes that will be attached. */
@@ -37,6 +40,8 @@ export function TaskComposer({
   source,
   branch,
   onBranchChange,
+  model,
+  onModelChange,
   onSubmit,
   isSubmitting,
   attachedMemoryCount,
@@ -171,28 +176,13 @@ export function TaskComposer({
             ) : null}
           </button>
 
-          {/* Branch selector - real branches from the Jules source. */}
-          <Select
-            value={effectiveBranch ?? undefined}
-            onValueChange={onBranchChange}
-            disabled={disabled || branches.length === 0}
-          >
-            <SelectTrigger
-              aria-label="Starting branch"
-              className="h-10 min-h-10 w-auto max-w-[11rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium"
-            >
-              <GitBranch className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-              <SelectValue placeholder={source ? "Branch" : "No repo"} />
+          <Select value={model} onValueChange={(value) => onModelChange(value as NvidiaModelId)} disabled={disabled}>
+            <SelectTrigger aria-label="NVIDIA model" className="h-10 min-h-10 w-auto max-w-[12rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
+              <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+              <SelectValue />
             </SelectTrigger>
             <SelectContent className="w-[min(18rem,90vw)]">
-              {branches.map((branchName) => (
-                <SelectItem key={branchName} value={branchName}>
-                  {branchName}
-                  {branchName === source?.defaultBranch ? (
-                    <span className="ml-2 text-xs text-muted-foreground">default</span>
-                  ) : null}
-                </SelectItem>
-              ))}
+              {NVIDIA_MODELS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}<span className="ml-2 text-xs text-muted-foreground">free</span></SelectItem>)}
             </SelectContent>
           </Select>
 

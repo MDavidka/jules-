@@ -40,6 +40,9 @@ export function SettingsView() {
   const [showKey, setShowKey] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [nvidiaKey, setNvidiaKey] = React.useState("");
+  const [nvidiaConfigured, setNvidiaConfigured] = React.useState(false);
+  const [savingNvidia, setSavingNvidia] = React.useState(false);
 
   const {
     register,
@@ -50,6 +53,21 @@ export function SettingsView() {
     resolver: zodResolver(julesApiKeySchema),
     defaultValues: { apiKey: "" },
   });
+
+  React.useEffect(() => {
+    void fetch("/api/settings/nvidia-key").then((response) => response.json()).then((data) => setNvidiaConfigured(Boolean(data.configured))).catch(() => undefined);
+  }, []);
+
+  const saveNvidiaKey = async () => {
+    setSavingNvidia(true);
+    try {
+      const response = await fetch("/api/settings/nvidia-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: nvidiaKey }) });
+      if (!response.ok) throw new Error("Could not save NVIDIA API key.");
+      setNvidiaKey(""); setNvidiaConfigured(true);
+      toast({ title: "NVIDIA AI connected", description: "Your key is encrypted and stored server-side.", variant: "success" });
+    } catch (error) { toast({ title: "Could not save NVIDIA key", description: errorMessage(error), variant: "error" }); }
+    finally { setSavingNvidia(false); }
+  };
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);
@@ -166,6 +184,15 @@ export function SettingsView() {
           {saveApiKey.isPending ? "Testing key…" : "Test & Save API Key"}
         </Button>
       </form>
+
+      <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-4">
+        <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" aria-hidden="true" /><div><p className="text-sm font-medium">NVIDIA AI Builder</p><p className="text-xs text-muted-foreground">Use free NVIDIA-hosted models to understand tasks and gather memory.</p></div></div>
+        <form onSubmit={(event) => { event.preventDefault(); void saveNvidiaKey(); }} className="flex flex-col gap-2 sm:flex-row">
+          <Input type="password" value={nvidiaKey} onChange={(event) => setNvidiaKey(event.target.value)} placeholder={nvidiaConfigured ? "NVIDIA key saved — paste to replace" : "Paste NVIDIA API key"} autoComplete="off" className="font-mono text-sm" />
+          <Button type="submit" disabled={!nvidiaKey.trim() || savingNvidia}>{savingNvidia ? "Saving…" : nvidiaConfigured ? "Replace key" : "Save key"}</Button>
+        </form>
+        <p className="text-xs text-muted-foreground">Stored with the same AES-256-GCM protection as your Jules key. The browser never receives the key.</p>
+      </section>
 
       {/* Links */}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
