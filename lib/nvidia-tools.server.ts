@@ -24,23 +24,36 @@ interface ResolvedRepo {
  * (`https://github.com/owner/repo`), or a plain `owner/repo`.
  */
 function resolveGitHubRepo(value: string): ResolvedRepo | null {
-  const input = value.trim();
+  const input = value.trim().replace(/[),.;!?]+$/, "");
   if (!input) return null;
 
-  const source = input.match(/^sources\/github\/([^/\s]+)\/([^/\s]+)/);
-  if (source) return { owner: source[1], repo: source[2], branch: "HEAD" };
+  const source = input.match(/^sources\/github\/([^/\s]+)\/([^/\s?#]+)/i);
+  if (source) return { owner: source[1]!, repo: stripGitSuffix(source[2]!), branch: "HEAD" };
 
-  const url = input.match(/github\.com\/([^/\s]+)\/([^/\s?#]+)/);
-  if (url) return { owner: url[1], repo: stripGitSuffix(url[2]), branch: "HEAD" };
+  try {
+    const url = new URL(input);
+    if (url.hostname.toLowerCase() !== "github.com") return null;
+    const [owner, repo] = url.pathname.split("/").filter(Boolean);
+    if (!owner || !repo || ["topics", "settings", "features", "marketplace"].includes(owner.toLowerCase())) return null;
+    return { owner, repo: stripGitSuffix(repo), branch: "HEAD" };
+  } catch {
+    // Fall through to the short owner/repo format.
+  }
 
-  const plain = input.match(/^([^/\s]+)\/([^/\s]+)$/);
-  if (plain) return { owner: plain[1], repo: stripGitSuffix(plain[2]), branch: "HEAD" };
+  const plain = input.match(/^([^/\s]+)\/([^/\s?#]+)$/);
+  if (plain) return { owner: plain[1]!, repo: stripGitSuffix(plain[2]!), branch: "HEAD" };
 
   return null;
 }
 
 function stripGitSuffix(repo: string) {
   return repo.replace(/\.git$/, "");
+}
+
+/** Extracts public GitHub repository links from an agent prompt. */
+export function extractPublicRepositoryLinks(value: string): string[] {
+  const matches = value.match(/https?:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(?:[^\s<>'\"]*)?/gi) ?? [];
+  return [...new Set(matches.map((match) => match.replace(/[),.;!?]+$/, "")))].slice(0, 4);
 }
 
 /**
@@ -83,8 +96,9 @@ export async function inspectPublicRepository(source: string) {
     : null;
 
   let readme = "README unavailable.";
-  for (let index = 0; index < README_FILES.length; index += 1) {
-    const response = probeResponses[index];
+  const readmeResponses = probeResponses.slice(0, README_FILES.length);
+  for (let index = 0; index < readmeResponses.length; index += 1) {
+    const response = readmeResponses[index];
     if (response?.ok) {
       readme = (await response.text()).slice(0, 12000);
       break;
@@ -95,10 +109,11 @@ export async function inspectPublicRepository(source: string) {
   }
 
   const manifests: Array<{ path: string; content: string }> = [];
-  for (let index = README_FILES.length; index < probePaths.length; index += 1) {
-    const response = probeResponses[index - README_FILES.length];
+  const manifestResponses = probeResponses.slice(README_FILES.length);
+  for (let index = 0; index < manifestResponses.length; index += 1) {
+    const response = manifestResponses[index];
     if (!response?.ok) continue;
-    manifests.push({ path: probePaths[index], content: (await response.text()).slice(0, 4000) });
+    manifests.push({ path: MANIFEST_FILES[index]!, content: (await response.text()).slice(0, 4000) });
   }
 
   return JSON.stringify(
