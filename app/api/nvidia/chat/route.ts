@@ -7,7 +7,7 @@ import {
   readWebPage,
 } from "@/lib/nvidia-tools.server";
 import { loadNvidiaApiKey } from "@/lib/nvidia.server";
-import { NVIDIA_MODELS } from "@/lib/nvidia-models";
+import { DEFAULT_NVIDIA_MODEL_ID } from "@/lib/nvidia-models";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
       attachments?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    const model = typeof body.model === "string" && body.model.includes("/") ? body.model : NVIDIA_MODELS[0].id;
+    const model = typeof body.model === "string" && body.model.includes("/") ? body.model : DEFAULT_NVIDIA_MODEL_ID;
     if (!prompt) return jsonError("Type a message to send.", 422, { code: "VALIDATION_ERROR" });
 
     const apiKey = await loadNvidiaApiKey();
@@ -73,13 +73,9 @@ export async function POST(request: Request) {
       .filter((attachment) => attachment.content)
       .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
       .join("\n\n");
-    const userText = [prompt, research, fileContext].filter(Boolean).join("\n\n");
-    const imageParts = attachments
-      .filter((attachment) => attachment.type.startsWith("image/") && isSafeImageDataUrl(attachment.dataUrl))
-      .map((attachment) => ({ type: "image_url", image_url: { url: attachment.dataUrl } }));
-    const userContent: string | Array<Record<string, unknown>> = imageParts.length > 0
-      ? [{ type: "text", text: userText }, ...imageParts]
-      : userText;
+    const imageContext = await describeImages(attachments, apiKey);
+    const userText = [prompt, research, fileContext, imageContext].filter(Boolean).join("\n\n");
+    const userContent: string = userText;
 
     const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
       method: "POST",
@@ -101,7 +97,7 @@ export async function POST(request: Request) {
     });
     if (!response.ok || !response.body) {
       const data = await response.json().catch(() => null);
-      return jsonError(typeof data?.message === "string" ? data.message : "NVIDIA request failed.", response.status >= 500 ? 502 : response.status, { code: "NVIDIA_REQUEST_FAILED" });
+      return jsonError(typeof data?.message === "string" ? data.message : "DeepSeek request failed.", response.status >= 500 ? 502 : response.status, { code: "NVIDIA_REQUEST_FAILED" });
     }
 
     const encoder = new TextEncoder();
@@ -110,25 +106,36 @@ export async function POST(request: Request) {
         const reader = response.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let emittedToken = false;
+
+        const processLine = (line: string) => {
+          if (!line.startsWith("data:")) return;
+          const value = line.slice(5).trim();
+          if (!value || value === "[DONE]") return;
+          const payload = JSON.parse(value) as {
+            error?: { message?: string };
+            choices?: Array<{ delta?: { content?: unknown } }>;
+          };
+          if (payload.error) throw new Error(payload.error.message ?? "The model returned an error.");
+          const token = payload.choices?.[0]?.delta?.content;
+          if (typeof token === "string" && token.length > 0) {
+            emittedToken = true;
+            controller.enqueue(encoder.encode(token));
+          }
+        };
+
         try {
           while (true) {
             const result = await reader.read();
             if (result.done) break;
             buffer += decoder.decode(result.value, { stream: true });
-            const lines = buffer.split("\n");
+            const lines = buffer.split(/\r?\n/);
             buffer = lines.pop() ?? "";
-            for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const value = line.slice(6).trim();
-              if (value === "[DONE]") continue;
-              try {
-                const token = JSON.parse(value).choices?.[0]?.delta?.content;
-                if (typeof token === "string") controller.enqueue(encoder.encode(token));
-              } catch {
-                // Ignore malformed or incomplete provider frames.
-              }
-            }
+            for (const line of lines) processLine(line);
           }
+          buffer += decoder.decode();
+          if (buffer.trim()) processLine(buffer.trim());
+          if (!emittedToken) throw new Error("The model returned an empty response.");
           controller.close();
         } catch (error) {
           controller.error(error);
@@ -138,6 +145,47 @@ export async function POST(request: Request) {
     return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive" } });
   } catch (error) {
     return handleRouteError(error);
+  }
+}
+
+async function describeImages(attachments: IncomingAttachment[], apiKey: string) {
+  const imageParts = attachments
+    .filter((attachment) => attachment.type.startsWith("image/") && isSafeImageDataUrl(attachment.dataUrl))
+    .map((attachment) => ({
+      type: "image_url",
+      image_url: { url: attachment.dataUrl },
+    }));
+  if (imageParts.length === 0) return "";
+
+  try {
+    const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "nvidia/nemotron-nano-12b-v2-vl",
+        stream: false,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "Describe the attached image(s) for a software engineering assistant. Include visible text, errors, UI details, and relevant code or diagrams. Be concise and factual." },
+            ...imageParts,
+          ],
+        }],
+        temperature: 0.1,
+        max_tokens: 1200,
+      }),
+    });
+    if (!response.ok) {
+      return `Image analysis was unavailable for ${imageParts.length} attached image${imageParts.length === 1 ? "" : "s"}; continue with the user's text and attachment names.`;
+    }
+    const data = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+    const description = data.choices?.[0]?.message?.content;
+    if (typeof description !== "string" || !description.trim()) {
+      return "The image analyzer returned no description; continue with the user's text and attachment names.";
+    }
+    return `Image analysis from the visual model:\n${description.trim().slice(0, 20_000)}`;
+  } catch {
+    return `Image analysis could not be completed for ${imageParts.length} attached image${imageParts.length === 1 ? "" : "s"}; continue with the user's text and attachment names.`;
   }
 }
 
