@@ -123,6 +123,21 @@ export interface MemoryNoteDoc {
   source?: string | null;
   /** When true the note is appended to new task prompts automatically. */
   pinned: boolean;
+  /** Short board label. Falls back to a content excerpt when absent. */
+  title?: string | null;
+  /**
+   * Board card category, used for the icon and accent on the memory board.
+   * `note` is plain text; the others render structured `data`.
+   */
+  kind?: "note" | "stack" | "connection" | "code" | "config";
+  /**
+   * Free-form structured payload the assistant can write, e.g.
+   * `{ framework: "next", startScript: "pnpm dev" }` or
+   * `{ platform: "github", repo: "owner/name" }`.
+   */
+  data?: Record<string, unknown> | null;
+  /** Ids of other memory notes this card links to on the board. */
+  connections?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -132,6 +147,15 @@ const MemoryNoteSchema = new Schema<MemoryNoteDoc>(
     content: { type: String, required: true, trim: true, maxlength: 4000 },
     source: { type: String, default: null },
     pinned: { type: Boolean, default: true },
+    title: { type: String, default: null, trim: true, maxlength: 120 },
+    kind: {
+      type: String,
+      enum: ["note", "stack", "connection", "code", "config"],
+      default: "note",
+    },
+    // `Mixed` keeps the assistant free to store any JSON shape it needs.
+    data: { type: Schema.Types.Mixed, default: null },
+    connections: { type: [String], default: [] },
   },
   { timestamps: true, versionKey: false },
 );
@@ -141,6 +165,38 @@ MemoryNoteSchema.index({ createdAt: -1 });
 export const MemoryNote: Model<MemoryNoteDoc> =
   (mongoose.models.MemoryNote as Model<MemoryNoteDoc>) ??
   mongoose.model<MemoryNoteDoc>("MemoryNote", MemoryNoteSchema);
+
+/** Wire shape for a memory note, shared by every memory route. */
+export interface SerializedMemoryNote {
+  id: string;
+  content: string;
+  source: string | null;
+  pinned: boolean;
+  title: string | null;
+  kind: NonNullable<MemoryNoteDoc["kind"]>;
+  data: Record<string, unknown> | null;
+  connections: string[];
+  createdAt: string | null;
+}
+
+export function serializeMemoryNote(
+  note: Pick<
+    MemoryNoteDoc,
+    "_id" | "content" | "source" | "pinned" | "title" | "kind" | "data" | "connections" | "createdAt"
+  >,
+): SerializedMemoryNote {
+  return {
+    id: String(note._id),
+    content: note.content,
+    source: note.source ?? null,
+    pinned: note.pinned,
+    title: note.title ?? null,
+    kind: note.kind ?? "note",
+    data: (note.data as Record<string, unknown> | null) ?? null,
+    connections: note.connections ?? [],
+    createdAt: note.createdAt?.toISOString() ?? null,
+  };
+}
 
 /* -------------------------------------------------------------------------- */
 /*                                  Helpers                                   */

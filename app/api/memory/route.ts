@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
-import { connectToDatabase, MemoryNote } from "@/lib/mongodb.server";
+import { connectToDatabase, MemoryNote, serializeMemoryNote } from "@/lib/mongodb.server";
 import { createMemorySchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Memory is a Jules+ feature stored in MongoDB, not a Jules API resource.
- * Pinned notes can be attached to a new task prompt from the composer.
+ * Pinned notes can be attached to a new task prompt from the composer, and
+ * every note is rendered as a card on the memory board.
  */
 
 export async function GET() {
@@ -18,15 +19,7 @@ export async function GET() {
     const notes = await MemoryNote.find({}).sort({ createdAt: -1 }).limit(200).lean().exec();
 
     return NextResponse.json(
-      {
-        items: notes.map((note) => ({
-          id: String(note._id),
-          content: note.content,
-          source: note.source ?? null,
-          pinned: note.pinned,
-          createdAt: note.createdAt?.toISOString() ?? null,
-        })),
-      },
+      { items: notes.map(serializeMemoryNote) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -52,18 +45,16 @@ export async function POST(request: Request) {
       content: parsed.data.content,
       source: parsed.data.source ?? null,
       pinned: parsed.data.pinned,
+      title: parsed.data.title ?? null,
+      kind: parsed.data.kind ?? "note",
+      data: parsed.data.data ?? null,
+      connections: parsed.data.connections ?? [],
     });
 
-    return NextResponse.json(
-      {
-        id: String(created._id),
-        content: created.content,
-        source: created.source ?? null,
-        pinned: created.pinned,
-        createdAt: created.createdAt?.toISOString() ?? null,
-      },
-      { status: 201, headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json(serializeMemoryNote(created.toObject()), {
+      status: 201,
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     return handleRouteError(error);
   }

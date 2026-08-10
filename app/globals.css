@@ -116,4 +116,11 @@
   .break-anywhere {
     overflow-wrap: anywhere;
   }
+
+  /* Dot grid backdrop for the memory board canvas. */
+  .dot-grid {
+    background-image: radial-gradient(hsl(0 0% 28%) 1.5px, transparent 1.5px);
+    background-size: 28px 28px;
+    background-position: 14px 14px;
+  }
 }

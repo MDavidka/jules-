@@ -1,17 +1,22 @@
-import { NextResponse } from "next/server";
-
+import type { AgentActivity } from "@/lib/agent-activity";
+import { createMemoryBlockFilter, MEMORY_BLOCK_INSTRUCTIONS, saveMemoryCards } from "@/lib/agent-memory.server";
+import { runDeepResearch } from "@/lib/agent-research.server";
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
-import {
-  extractPublicRepositoryLinks,
-  inspectPublicRepository,
-  readWebPage,
-} from "@/lib/nvidia-tools.server";
-import { loadNvidiaApiKey } from "@/lib/nvidia.server";
+import { extractPublicRepositoryLinks, inspectPublicRepository } from "@/lib/nvidia-tools.server";
+import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import { errorMessage } from "@/lib/utils";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 
 const MODEL_IDS: ReadonlySet<string> = new Set(NVIDIA_MODELS.map((item) => item.id));
 const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
+
+const SYSTEM_PROMPT = [
+  "You are the Jules+ project assistant.",
+  "Answer in concise markdown, using the repository context, research findings, attached files, and image analysis provided with the request.",
+  "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
+  "Never start or stop a Jules session without first proposing an explicit confirmation step.",
+  MEMORY_BLOCK_INSTRUCTIONS,
+].join(" ");
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +40,7 @@ export async function POST(request: Request) {
       history?: unknown;
       source?: unknown;
       attachments?: unknown;
+      deepResearch?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     const requestedModel = typeof body.model === "string" ? body.model : "";
@@ -65,79 +71,107 @@ export async function POST(request: Request) {
       return jsonError(`The image "${oversizedImage.name}" is too large after compression.`, 413, { code: "IMAGE_TOO_LARGE" });
     }
 
-    const repositoryInputs = [...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)];
-    const uniqueRepositoryInputs = [...new Set(repositoryInputs)];
-    const repositoryResearch = await Promise.all(
-      uniqueRepositoryInputs.slice(0, 4).map(async (repository) => inspectPublicRepository(repository)),
-    );
-
-    const urls = [...new Set((prompt.match(/https?:\/\/[^\s<>'"]+/gi) ?? []).map((url) => url.replace(/[),.;!?]+$/, "")))].slice(0, 4);
-    const webResearch = await Promise.all(
-      urls
-        .filter((url) => !/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+/i.test(url))
-        .map(async (url) => `Web research (${url}):\n${await readWebPage(url)}`),
-    );
-
-    const research = [
-      repositoryResearch.length > 0 ? `MCP repository context:\n${repositoryResearch.join("\n\n")}` : "",
-      ...webResearch,
-    ].filter(Boolean).join("\n\n");
-    const fileContext = attachments
-      .filter((attachment) => attachment.content)
-      .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
-      .join("\n\n");
-    const imageContext = await describeImages(attachments, apiKey);
-    const userText = [prompt, research, fileContext, imageContext].filter(Boolean).join("\n\n");
-    const userContent: string = userText;
-
-    const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        messages: [
-          {
-            role: "system",
-            content: "You are the Jules+ project memory assistant. Think in concise steps. Use the MCP repository context, public links, attached files, and images to understand the request. Gather durable user/project memory. Never start or stop Jules without proposing an explicit confirmation action card.",
-          },
-          ...history,
-          { role: "user", content: userContent },
-        ],
-        temperature: 0.2,
-        max_tokens: 1200,
-      }),
-    });
-    if (!response.ok || !response.body) {
-      const data = await response.json().catch(() => null);
-      return jsonError(typeof data?.message === "string" ? data.message : "DeepSeek request failed.", response.status >= 500 ? 502 : response.status, { code: "NVIDIA_REQUEST_FAILED" });
-    }
-
+    const deepResearch = body.deepResearch !== false;
     const encoder = new TextEncoder();
+
     const stream = new ReadableStream({
       async start(controller) {
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let emittedToken = false;
-
-        const processLine = (line: string) => {
-          if (!line.startsWith("data:")) return;
-          const value = line.slice(5).trim();
-          if (!value || value === "[DONE]") return;
-          const payload = JSON.parse(value) as {
-            error?: { message?: string };
-            choices?: Array<{ delta?: { content?: unknown } }>;
-          };
-          if (payload.error) throw new Error(payload.error.message ?? "The model returned an error.");
-          const token = payload.choices?.[0]?.delta?.content;
-          if (typeof token === "string" && token.length > 0) {
-            emittedToken = true;
-            controller.enqueue(encoder.encode(token));
-          }
+        /** Every chunk is one newline-delimited JSON event. */
+        const send = (event: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
         };
+        const sendStatus = (activity: AgentActivity) => send({ type: "status", activity });
 
         try {
+          sendStatus("thinking");
+
+          const fileContext = attachments
+            .filter((attachment) => attachment.content)
+            .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
+            .join("\n\n");
+
+          let imageContext = "";
+          if (attachments.some((attachment) => attachment.type.startsWith("image/"))) {
+            sendStatus("reading");
+            imageContext = await describeImages(attachments, apiKey);
+          }
+
+          // Quick pass: always pull context for repositories named in the prompt.
+          const repositoryInputs = [...new Set([...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)])];
+          let research = "";
+          if (repositoryInputs.length > 0) {
+            sendStatus("inspecting");
+            const repositoryResearch = await Promise.all(
+              repositoryInputs.slice(0, 4).map(async (repository) => inspectPublicRepository(repository)),
+            );
+            research = `Repository context:\n${repositoryResearch.join("\n\n")}`;
+          }
+
+          // Deep pass: let the agent search the web and walk the repo itself.
+          let deepFindings = "";
+          if (deepResearch) {
+            deepFindings = await runDeepResearch({
+              apiKey,
+              model,
+              prompt,
+              source: source || undefined,
+              onActivity: sendStatus,
+            });
+          }
+
+          sendStatus("working");
+
+          const userContent = [prompt, research, deepFindings, fileContext, imageContext]
+            .filter(Boolean)
+            .join("\n\n");
+
+          const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model,
+              stream: true,
+              messages: [
+                { role: "system", content: SYSTEM_PROMPT },
+                ...history,
+                { role: "user", content: userContent },
+              ],
+              temperature: 0.2,
+              max_tokens: 1600,
+            }),
+          });
+          if (!response.ok || !response.body) {
+            const data = (await response.json().catch(() => null)) as { message?: unknown } | null;
+            throw new Error(
+              typeof data?.message === "string" ? data.message : `The model request failed (${response.status}).`,
+            );
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          const memoryFilter = createMemoryBlockFilter();
+          let buffer = "";
+          let emittedToken = false;
+
+          const processLine = (line: string) => {
+            if (!line.startsWith("data:")) return;
+            const value = line.slice(5).trim();
+            if (!value || value === "[DONE]") return;
+
+            const payload = JSON.parse(value) as {
+              error?: { message?: string };
+              choices?: Array<{ delta?: { content?: unknown } }>;
+            };
+            if (payload.error) throw new Error(payload.error.message ?? "The model returned an error.");
+
+            const token = payload.choices?.[0]?.delta?.content;
+            if (typeof token !== "string" || token.length === 0) return;
+
+            emittedToken = true;
+            const visible = memoryFilter.push(token);
+            if (visible) send({ type: "token", value: visible });
+          };
+
           while (true) {
             const result = await reader.read();
             if (result.done) break;
@@ -148,14 +182,36 @@ export async function POST(request: Request) {
           }
           buffer += decoder.decode();
           if (buffer.trim()) processLine(buffer.trim());
+
+          const trailing = memoryFilter.flush();
+          if (trailing) send({ type: "token", value: trailing });
           if (!emittedToken) throw new Error("The model returned an empty response.");
+
+          // Persist anything the model wrote to the memory board.
+          const memoryBlock = memoryFilter.memoryBlock();
+          if (memoryBlock) {
+            sendStatus("saving");
+            const saved = await saveMemoryCards(memoryBlock, source || null);
+            if (saved > 0) send({ type: "memory", saved });
+          }
+
+          send({ type: "done" });
           controller.close();
         } catch (error) {
-          controller.error(error);
+          // The client renders this instead of a partial reply.
+          send({ type: "error", message: errorMessage(error, "The assistant request failed.") });
+          controller.close();
         }
       },
     });
-    return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive" } });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   } catch (error) {
     return handleRouteError(error);
   }
@@ -175,7 +231,7 @@ async function describeImages(attachments: IncomingAttachment[], apiKey: string)
     const timeout = setTimeout(() => controller.abort(), 45_000);
     let response: Response;
     try {
-      response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         signal: controller.signal,

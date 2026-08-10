@@ -3,6 +3,7 @@
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 import { useNvidiaModels } from "@/hooks/use-nvidia-models";
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
@@ -16,6 +17,7 @@ import { RepoPickerSheet } from "@/components/repositories/repo-picker-sheet";
 import { RepositoriesView } from "@/components/repositories/repositories-view";
 import { SessionDetailView } from "@/components/sessions/session-detail-view";
 import { TaskComposer, type AgentAttachment } from "@/components/sessions/task-composer";
+import { AgentActivityIndicator, isAgentActivity, type AgentActivity } from "@/components/ui/dot-matrix-loader";
 import { MarkdownContent } from "@/components/ui/markdown-content";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
@@ -25,7 +27,7 @@ import { useJulesConfig } from "@/hooks/use-jules-config";
 import { useMemory } from "@/hooks/use-memory";
 import { useSessions } from "@/hooks/use-sessions";
 import { useSource, useSources } from "@/hooks/use-sources";
-import { ApiError } from "@/lib/api-client";
+import { ApiError, queryKeys } from "@/lib/api-client";
 import { errorMessage } from "@/lib/utils";
 
 export function AppShell() {
@@ -58,6 +60,7 @@ export function AppShell() {
 const LAST_SELECTED_SOURCE_KEY = "jules-plus:last-selected-source";
 
 function ConfiguredApp() {
+  const queryClient = useQueryClient();
 
   const [activeView, setActiveView] = React.useState<ViewId>("new-task");
   const [selectedSourceName, setSelectedSourceName] = React.useState<string | null>(null);
@@ -74,6 +77,7 @@ function ConfiguredApp() {
   }, [model, nvidiaModelsQuery.models]);
   const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [assistantPending, setAssistantPending] = React.useState(false);
+  const [assistantActivity, setAssistantActivity] = React.useState<AgentActivity>("thinking");
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
 
   const [navOpen, setNavOpen] = React.useState(false);
@@ -169,6 +173,7 @@ function ConfiguredApp() {
   const handleSubmitTask = async (prompt: string, attachments: AgentAttachment[]) => {
     const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
     setAssistantPending(true);
+    setAssistantActivity("thinking");
     setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
 
     try {
@@ -188,33 +193,73 @@ function ConfiguredApp() {
         throw new Error(data?.error ?? data?.message ?? "Assistant request failed.");
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let receivedContent = false;
-      while (true) {
-        const result = await reader.read();
-        if (result.done) break;
-        const token = decoder.decode(result.value, { stream: true });
-        if (!token) continue;
-        receivedContent = true;
+      const appendToken = (token: string) => {
         setAssistantMessages((current) => {
           const next = [...current];
           const last = next[next.length - 1];
           if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token };
           return next;
         });
+      };
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let receivedContent = false;
+      let savedMemoryCount = 0;
+      let streamError: string | null = null;
+
+      // The route streams newline-delimited JSON events, not raw text.
+      const handleEvent = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+
+        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown };
+        try {
+          event = JSON.parse(trimmed);
+        } catch {
+          return;
+        }
+
+        switch (event.type) {
+          case "status":
+            if (isAgentActivity(event.activity)) setAssistantActivity(event.activity);
+            break;
+          case "token":
+            if (typeof event.value === "string" && event.value) {
+              receivedContent = true;
+              appendToken(event.value);
+            }
+            break;
+          case "memory":
+            if (typeof event.saved === "number") savedMemoryCount += event.saved;
+            break;
+          case "error":
+            streamError = typeof event.message === "string" ? event.message : "The assistant request failed.";
+            break;
+          default:
+            break;
+        }
+      };
+
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        buffer += decoder.decode(result.value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) handleEvent(line);
       }
-      const trailingToken = decoder.decode();
-      if (trailingToken) {
-        receivedContent = true;
-        setAssistantMessages((current) => {
-          const next = [...current];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + trailingToken };
-          return next;
-        });
-      }
+      buffer += decoder.decode();
+      if (buffer) handleEvent(buffer);
+
+      if (streamError) throw new Error(streamError);
       if (!receivedContent) throw new Error("The assistant returned an empty response. Try a smaller image or a different prompt.");
+
+      // Refresh the memory board when the assistant stored new cards.
+      if (savedMemoryCount > 0) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.memory });
+      }
     } catch (error) {
       setAssistantMessages((current) => {
         const next = [...current];
@@ -279,7 +324,7 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} composerHeight={composerHeight} />
+            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} />
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -346,7 +391,7 @@ function ConfiguredApp() {
 }
 
 /** The near-empty hero state from the reference design. */
-function NewTaskView({ messages, isStreaming, composerHeight }: { messages: Array<{ role: "user" | "assistant"; content: string }>; isStreaming: boolean; composerHeight: number }) {
+function NewTaskView({ messages, isStreaming, activity, composerHeight }: { messages: Array<{ role: "user" | "assistant"; content: string }>; isStreaming: boolean; activity: AgentActivity; composerHeight: number }) {
   return (
     <div
       className="flex flex-1 flex-col overflow-y-auto px-4 pb-[calc(var(--composer-height)+1.5rem)] pt-6 sm:px-6 lg:pb-10"
@@ -358,8 +403,16 @@ function NewTaskView({ messages, isStreaming, composerHeight }: { messages: Arra
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
           {messages.map((message, index) => (
             <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] px-5 py-3 text-base leading-relaxed text-foreground"}>
-              {message.role === "assistant" ? <MarkdownContent>{message.content}</MarkdownContent> : <p className="whitespace-pre-wrap">{message.content}</p>}
-              {message.role === "assistant" && index === messages.length - 1 && isStreaming ? <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-primary align-middle" aria-label="Assistant is typing" /> : null}
+              {message.role === "assistant" ? (
+                // While the reply is still empty the status row stands in for it.
+                index === messages.length - 1 && isStreaming && !message.content ? (
+                  <AgentActivityIndicator activity={activity} />
+                ) : (
+                  <MarkdownContent>{message.content}</MarkdownContent>
+                )
+              ) : (
+                <p className="whitespace-pre-wrap">{message.content}</p>
+              )}
             </div>
           ))}
         </div>
