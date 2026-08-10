@@ -20,7 +20,13 @@ export async function POST(request: Request) {
     let research = "";
     if (source) research += `\nRepository research:\n${await inspectPublicRepository(source)}`;
     const url = prompt.match(/https?:\/\/[^\s]+/)?.[0];
-    if (url) research += `\nWeb research (${url}):\n${await readWebPage(url)}`;
+    if (url) {
+      if (/github\.com\/[^/\s]+\/[^/\s?#]+/.test(url)) {
+        research += `\nRepository research (linked repo):\n${await inspectPublicRepository(url)}`;
+      } else {
+        research += `\nWeb research (${url}):\n${await readWebPage(url)}`;
+      }
+    }
     const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

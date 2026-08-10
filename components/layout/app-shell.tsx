@@ -128,7 +128,7 @@ function ConfiguredApp() {
     const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
     setAssistantPending(true);
     setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
-    const response = await fetch("/api/nvidia/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${prompt}${memoryBlock}`, model, source: selectedSourceName, history: assistantMessages }) });
+    const response = await fetch("/api/nvidia/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${prompt}${memoryBlock}`, model, source: selectedSource?.githubUrl ?? selectedSource?.fullName ?? selectedSourceName, history: assistantMessages }) });
     if (!response.ok || !response.body) { const data = await response.json().catch(() => null); setAssistantPending(false); throw new Error(data?.message ?? "NVIDIA assistant request failed."); }
     const reader = response.body.getReader(); const decoder = new TextDecoder();
     while (true) { const result = await reader.read(); if (result.done) break; const token = decoder.decode(result.value, { stream: true }); setAssistantMessages((current) => { const next = [...current]; const last = next[next.length - 1]; if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token }; return next; }); }
