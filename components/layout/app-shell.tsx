@@ -221,7 +221,7 @@ function ConfiguredApp() {
 
           {/* Composer: fixed to the bottom on mobile, inline on desktop. */}
           {activeView === "new-task" ? (
-            <div className="fixed inset-x-0 bottom-0 z-20 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
+            <div className="sticky bottom-0 z-20 shrink-0 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
                   source={selectedSource}
@@ -263,7 +263,7 @@ function ConfiguredApp() {
 /** The near-empty hero state from the reference design. */
 function NewTaskView({ messages }: { messages: Array<{ role: "user" | "assistant"; content: string }> }) {
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-48 pt-6 sm:px-6 lg:pb-10">
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-48 pt-6 [scrollbar-gutter:stable] sm:px-6 lg:pb-10">
       {messages.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the NVIDIA assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
       ) : <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] whitespace-pre-wrap px-5 py-3 text-base leading-relaxed text-foreground"}>{message.content}{message.role === "assistant" && index === messages.length - 1 ? <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-primary align-middle" aria-label="Assistant is typing" /> : null}</div>)}</div>}

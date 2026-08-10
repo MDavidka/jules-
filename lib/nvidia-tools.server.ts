@@ -1,5 +1,8 @@
+import { fetchGitHubRepositoryContext, parseGitHubRepo } from "@/lib/github-research.server";
+
 export async function inspectPublicRepository(source: string) {
-  const name = source.includes("/") ? source : "";
+  const parsed = parseGitHubRepo(source);
+  const name = parsed ? `${parsed.owner}/${parsed.repo}` : "";
   if (!name) return "No repository was selected.";
   const [repoResponse, readmeResponse] = await Promise.all([
     fetch(`https://api.github.com/repos/${name}`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "jules-plus" }, next: { revalidate: 300 } }),
@@ -7,7 +10,8 @@ export async function inspectPublicRepository(source: string) {
   ]);
   const repo = repoResponse.ok ? await repoResponse.json() as { full_name?: string; description?: string; language?: string; topics?: string[] } : null;
   const readme = readmeResponse.ok ? (await readmeResponse.text()).slice(0, 12000) : "README unavailable.";
-  return JSON.stringify({ repository: repo, readme }, null, 2);
+  const rawContext = await fetchGitHubRepositoryContext(name);
+  return JSON.stringify({ repository: repo, readme, rawContext }, null, 2);
 }
 
 export async function readWebPage(url: string) {

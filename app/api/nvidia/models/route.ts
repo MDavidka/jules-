@@ -16,12 +16,13 @@ export async function GET() {
     });
     if (!response.ok) return NextResponse.json({ models: NVIDIA_MODELS, live: false });
     const data = await response.json();
+    const allowed = new Set<string>(NVIDIA_MODELS.map((item) => item.id));
     const models = Array.isArray(data.data)
       ? data.data.map((item: { id?: unknown; name?: unknown; owned_by?: unknown }) => {
           const id = typeof item.id === "string" ? item.id : "";
           const provider = id.split("/")[0] || "nvidia";
           return { id, label: typeof item.name === "string" ? item.name : id, provider, icon: provider };
-        }).filter((item: { id: string }) => item.id)
+        }).filter((item: { id: string }) => allowed.has(item.id))
       : NVIDIA_MODELS;
     return NextResponse.json({ models: models.length ? models : NVIDIA_MODELS, live: true }, { headers: { "Cache-Control": "private, max-age=300" } });
   } catch {
