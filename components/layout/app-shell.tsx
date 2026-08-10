@@ -8,7 +8,7 @@ import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
 import { ChecksView } from "@/components/checks/checks-view";
-import { DashboardView } from "@/components/dashboard/dashboard-view";
+import { SessionsView } from "@/components/sessions/sessions-view";
 import { AppHeader } from "@/components/layout/app-header";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { VIEW_TITLES, type ViewId } from "@/components/layout/nav-items";
@@ -352,7 +352,7 @@ function ConfiguredApp() {
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
-                <DashboardView
+                <SessionsView
                   enabled
                   selectedSource={selectedSource}
                   onOpenSession={handleOpenSession}

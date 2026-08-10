@@ -1,9 +1,9 @@
 "use client";
 
-import { Inbox, SquarePen } from "lucide-react";
+import { ArrowRight, Inbox, SquarePen } from "lucide-react";
 import * as React from "react";
 
-import { SessionCard } from "@/components/dashboard/session-card";
+import { SessionCard } from "@/components/sessions/session-card";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
@@ -12,7 +12,7 @@ import { POLL_INTERVALS, useSessions } from "@/hooks/use-sessions";
 import { errorMessage } from "@/lib/utils";
 import type { NormalizedSource } from "@/types/jules";
 
-interface DashboardViewProps {
+interface SessionsViewProps {
   enabled: boolean;
   selectedSource: NormalizedSource | null;
   onOpenSession: (sessionName: string) => void;
@@ -27,12 +27,12 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "done", label: "Finished" },
 ];
 
-export function DashboardView({
+export function SessionsView({
   enabled,
   selectedSource,
   onOpenSession,
   onNewTask,
-}: DashboardViewProps) {
+}: SessionsViewProps) {
   const [filter, setFilter] = React.useState<Filter>("all");
   const [scope, setScope] = React.useState<"repo" | "all">("all");
 
@@ -57,11 +57,11 @@ export function DashboardView({
   }, [sessions, filter]);
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">Dashboard</h2>
+    <div className="space-y-6">
+      <div className="space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Sessions</h2>
             <p className="text-sm text-muted-foreground">
               {activeCount > 0 ? (
                 <span>{activeCount} active · refreshing every {POLL_INTERVALS.ACTIVE_LIST_MS / 1000}s</span>
@@ -70,18 +70,21 @@ export function DashboardView({
               )}
             </p>
           </div>
-          <Button size="sm" onClick={onNewTask}>
-            <SquarePen className="h-4 w-4" aria-hidden="true" />
-            New
+          <Button
+            size="sm"
+            onClick={onNewTask}
+            className="shrink-0 rounded-full bg-foreground px-4 text-background shadow-sm hover:bg-foreground/90"
+          >
+            Start for free
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
 
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
           <div
             role="group"
             aria-label="Filter sessions by state"
-            className="flex items-center gap-1 rounded-full border border-border/70 bg-card p-1"
+            className="flex items-center gap-1 rounded-full border border-white/[0.08] bg-card/70 p-1"
           >
             {FILTERS.map((item) => (
               <button
@@ -91,8 +94,8 @@ export function DashboardView({
                 aria-pressed={filter === item.id}
                 className={
                   filter === item.id
-                    ? "rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-foreground"
-                    : "rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                    ? "min-h-9 rounded-full bg-white/[0.1] px-4 text-xs font-medium text-foreground shadow-sm"
+                    : "min-h-9 rounded-full px-4 text-xs font-medium text-muted-foreground transition-colors hover:bg-white/[0.05] hover:text-foreground"
                 }
               >
                 {item.label}
@@ -107,8 +110,8 @@ export function DashboardView({
               aria-pressed={scope === "repo"}
               className={
                 scope === "repo"
-                  ? "truncate rounded-full border border-primary/40 bg-primary/15 px-3 py-2 text-xs font-medium text-primary"
-                  : "truncate rounded-full border border-border/70 bg-card px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                  ? "min-h-11 truncate rounded-full border border-primary/40 bg-primary/15 px-4 text-xs font-medium text-primary"
+                  : "min-h-11 truncate rounded-full border border-white/[0.08] bg-card/70 px-4 text-xs font-medium text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground"
               }
             >
               {scope === "repo" ? `Only ${selectedSource.fullName}` : "Filter to this repo"}
@@ -117,17 +120,15 @@ export function DashboardView({
         </div>
       </div>
 
-      {/* Content states: loading -> error -> empty -> data */}
       {sessionsQuery.isPending ? (
-        <ul className="space-y-2" aria-busy="true">
+        <ul className="mx-auto w-full max-w-2xl space-y-4 px-5 sm:px-0" aria-busy="true">
           {[0, 1, 2, 3].map((index) => (
             <li
               key={index}
-              className="space-y-3 rounded-2xl border border-border/70 bg-card px-3.5 py-3.5"
+              className="min-h-[132px] space-y-4 rounded-[1.45rem] border-2 border-white/[0.1] bg-card/70 px-5 py-5"
             >
               <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-5 w-24 rounded-full" />
-              <Skeleton className="h-3 w-1/2" />
+              <Skeleton className="h-8 w-24 rounded-lg" />
             </li>
           ))}
         </ul>
@@ -141,7 +142,7 @@ export function DashboardView({
       ) : visibleSessions.length === 0 ? (
         <EmptyState
           icon={Inbox}
-          title={sessions.length === 0 ? "No tasks yet" : "Nothing matches this filter"}
+          title={sessions.length === 0 ? "No sessions yet" : "Nothing matches this filter"}
           description={
             sessions.length === 0
               ? "Start your first task and Jules will plan, code, and report progress here."
@@ -151,20 +152,19 @@ export function DashboardView({
             sessions.length === 0 ? (
               <Button size="sm" onClick={onNewTask}>
                 <SquarePen className="h-4 w-4" aria-hidden="true" />
-                New task
+                Start for free
               </Button>
             ) : null
           }
         />
       ) : (
         <>
-          <ul className="space-y-2">
+          <ul className="mx-auto w-full max-w-2xl space-y-4 px-5 sm:px-0">
             {visibleSessions.map((session) => (
               <SessionCard key={session.name} session={session} onOpen={onOpenSession} />
             ))}
           </ul>
 
-          {/* Live region so polling updates are announced without stealing focus. */}
           <p aria-live="polite" className="sr-only">
             {visibleSessions.length} sessions shown, {activeCount} active.
           </p>
