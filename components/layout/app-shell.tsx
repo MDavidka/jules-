@@ -66,8 +66,9 @@ function ConfiguredApp() {
   const nvidiaModelsQuery = useNvidiaModels();
   const nvidiaModels = React.useMemo(() => {
     const liveModels = nvidiaModelsQuery.models.length ? nvidiaModelsQuery.models : NVIDIA_MODELS;
+    const defaultModel = NVIDIA_MODELS.find((item) => item.id === DEFAULT_NVIDIA_MODEL_ID);
     const selectedModel = NVIDIA_MODELS.find((item) => item.id === model);
-    const orderedModels = [NVIDIA_MODELS[0], ...liveModels, selectedModel].filter(Boolean);
+    const orderedModels = [defaultModel, ...liveModels, selectedModel].filter(Boolean);
     return [...new Map(orderedModels.map((item) => [item!.id, item!])).values()];
   }, [model, nvidiaModelsQuery.models]);
   const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
@@ -76,6 +77,8 @@ function ConfiguredApp() {
 
   const [navOpen, setNavOpen] = React.useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = React.useState(false);
+  const [composerHeight, setComposerHeight] = React.useState(0);
+  const composerRef = React.useRef<HTMLDivElement>(null);
 
   const sourcesQuery = useSources({ enabled: true });
   const sources = React.useMemo(() => sourcesQuery.data?.items ?? [], [sourcesQuery.data]);
@@ -114,6 +117,16 @@ function ConfiguredApp() {
     (session) => session.activity === "active" || session.activity === "waiting",
   );
 
+  React.useLayoutEffect(() => {
+    const element = composerRef.current;
+    if (!element) return;
+    const updateHeight = () => setComposerHeight(Math.ceil(element.getBoundingClientRect().height));
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const handleNavigate = (view: ViewId) => {
     setActiveView(view);
     if (view !== "session") setOpenSessionName(null);
@@ -147,7 +160,7 @@ function ConfiguredApp() {
       });
       if (!response.ok || !response.body) {
         const data = await response.json().catch(() => null);
-        throw new Error(data?.error ?? data?.message ?? "DeepSeek assistant request failed.");
+        throw new Error(data?.error ?? data?.message ?? "Assistant request failed.");
       }
 
       const reader = response.body.getReader();
@@ -176,8 +189,8 @@ function ConfiguredApp() {
           return next;
         });
       }
-      if (!receivedContent) throw new Error("DeepSeek returned an empty response. Try a smaller image or a different prompt.");
-      toast({ title: "DeepSeek replied", description: "Repository context and next steps are ready.", variant: "success" });
+      if (!receivedContent) throw new Error("The assistant returned an empty response. Try a smaller image or a different prompt.");
+      toast({ title: "Assistant replied", description: "Repository context and next steps are ready.", variant: "success" });
     } catch (error) {
       setAssistantMessages((current) => {
         const next = [...current];
@@ -241,7 +254,7 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} />
+            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} composerHeight={composerHeight} />
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -276,7 +289,7 @@ function ConfiguredApp() {
 
           {/* Composer: fixed to the bottom on mobile, inline on desktop. */}
           {activeView === "new-task" ? (
-            <div className="fixed inset-x-0 bottom-0 z-20 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
+            <div ref={composerRef} className="fixed inset-x-0 bottom-0 z-20 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
                   source={selectedSource}
@@ -308,11 +321,14 @@ function ConfiguredApp() {
 }
 
 /** The near-empty hero state from the reference design. */
-function NewTaskView({ messages, isStreaming }: { messages: Array<{ role: "user" | "assistant"; content: string }>; isStreaming: boolean }) {
+function NewTaskView({ messages, isStreaming, composerHeight }: { messages: Array<{ role: "user" | "assistant"; content: string }>; isStreaming: boolean; composerHeight: number }) {
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-48 pt-6 sm:px-6 lg:pb-10">
+    <div
+      className="flex flex-1 flex-col overflow-y-auto px-4 pb-[calc(var(--composer-height)+1.5rem)] pt-6 sm:px-6 lg:pb-10"
+      style={{ "--composer-height": `${Math.max(composerHeight, 208)}px` } as React.CSSProperties}
+    >
       {messages.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the DeepSeek assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
+        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
       ) : (
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
           {messages.map((message, index) => (
