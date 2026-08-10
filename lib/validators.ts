@@ -65,7 +65,7 @@ export const listActivitiesQuerySchema = paginationSchema;
 /*                                  Sessions                                  */
 /* -------------------------------------------------------------------------- */
 
-export const PROMPT_MIN_LENGTH = 5;
+export const PROMPT_MIN_LENGTH = 1;
 export const PROMPT_MAX_LENGTH = 10_000;
 
 export const createSessionSchema = z.object({

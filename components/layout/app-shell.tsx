@@ -11,12 +11,12 @@ import { AppHeader } from "@/components/layout/app-header";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { VIEW_TITLES, type ViewId } from "@/components/layout/nav-items";
 import { Sidebar } from "@/components/layout/sidebar";
-import { MemoryAttachSheet } from "@/components/memory/memory-attach-sheet";
 import { MemoryView } from "@/components/memory/memory-view";
 import { RepoPickerSheet } from "@/components/repositories/repo-picker-sheet";
 import { RepositoriesView } from "@/components/repositories/repositories-view";
 import { SessionDetailView } from "@/components/sessions/session-detail-view";
-import { TaskComposer } from "@/components/sessions/task-composer";
+import { TaskComposer, type AgentAttachment } from "@/components/sessions/task-composer";
+import { MarkdownContent } from "@/components/ui/markdown-content";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -71,7 +71,6 @@ function ConfiguredApp() {
 
   const [navOpen, setNavOpen] = React.useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = React.useState(false);
-  const [memorySheetOpen, setMemorySheetOpen] = React.useState(false);
 
   const sourcesQuery = useSources({ enabled: true });
   const sources = React.useMemo(() => sourcesQuery.data?.items ?? [], [sourcesQuery.data]);
@@ -124,14 +123,39 @@ function ConfiguredApp() {
     setActiveView("session");
   };
 
-  const handleSubmitTask = async (prompt: string) => {
+  const handleSubmitTask = async (prompt: string, attachments: AgentAttachment[]) => {
     const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
     setAssistantPending(true);
     setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
-    const response = await fetch("/api/nvidia/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${prompt}${memoryBlock}`, model, source: selectedSource?.githubUrl ?? selectedSource?.fullName ?? selectedSourceName, history: assistantMessages }) });
-    if (!response.ok || !response.body) { const data = await response.json().catch(() => null); setAssistantPending(false); throw new Error(data?.message ?? "NVIDIA assistant request failed."); }
-    const reader = response.body.getReader(); const decoder = new TextDecoder();
-    while (true) { const result = await reader.read(); if (result.done) break; const token = decoder.decode(result.value, { stream: true }); setAssistantMessages((current) => { const next = [...current]; const last = next[next.length - 1]; if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token }; return next; }); }
+    const response = await fetch("/api/nvidia/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: `${prompt}${memoryBlock}`,
+        model,
+        source: selectedSource?.githubUrl ?? selectedSource?.fullName ?? selectedSourceName,
+        attachments,
+        history: assistantMessages,
+      }),
+    });
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => null);
+      setAssistantPending(false);
+      throw new Error(data?.error ?? data?.message ?? "NVIDIA assistant request failed.");
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      const token = decoder.decode(result.value, { stream: true });
+      setAssistantMessages((current) => {
+        const next = [...current];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token };
+        return next;
+      });
+    }
     setAssistantPending(false);
     toast({ title: "NVIDIA assistant replied", description: "Repository context and next steps are ready.", variant: "success" });
   };
@@ -186,7 +210,7 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView messages={assistantMessages} />
+            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} />
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -232,9 +256,7 @@ function ConfiguredApp() {
                   onModelChange={setModel}
                   onSubmit={handleSubmitTask}
                   isSubmitting={assistantPending}
-                  attachedMemoryCount={pinnedNotes.length}
-                  onOpenMemory={() => setMemorySheetOpen(true)}
-                  disabled={sources.length === 0 && !sourcesQuery.isPending}
+                  disabled={false}
                 />
               </div>
             </div>
@@ -250,26 +272,30 @@ function ConfiguredApp() {
         selectedSource={selectedSourceName}
         onSelect={handleSelectSource}
       />
-
-      <MemoryAttachSheet
-        open={memorySheetOpen}
-        onOpenChange={setMemorySheetOpen}
-        onManageAll={() => handleNavigate("memory")}
-      />
     </div>
   );
 }
 
 /** The near-empty hero state from the reference design. */
-function NewTaskView({ messages }: { messages: Array<{ role: "user" | "assistant"; content: string }> }) {
+function NewTaskView({ messages, isStreaming }: { messages: Array<{ role: "user" | "assistant"; content: string }>; isStreaming: boolean }) {
   return (
     <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-48 pt-6 sm:px-6 lg:pb-10">
       {messages.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the NVIDIA assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
-      ) : <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] whitespace-pre-wrap px-5 py-3 text-base leading-relaxed text-foreground"}>{message.content}{message.role === "assistant" && index === messages.length - 1 ? <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-primary align-middle" aria-label="Assistant is typing" /> : null}</div>)}</div>}
+      ) : (
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+          {messages.map((message, index) => (
+            <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] px-5 py-3 text-base leading-relaxed text-foreground"}>
+              {message.role === "assistant" ? <MarkdownContent>{message.content}</MarkdownContent> : <p className="whitespace-pre-wrap">{message.content}</p>}
+              {message.role === "assistant" && index === messages.length - 1 && isStreaming ? <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-primary align-middle" aria-label="Assistant is typing" /> : null}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
+
 
 function FullScreenLoader() {
   return (

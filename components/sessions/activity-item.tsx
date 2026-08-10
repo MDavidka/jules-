@@ -15,6 +15,7 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn, formatRelativeTime } from "@/lib/utils";
+import { MarkdownContent } from "@/components/ui/markdown-content";
 import type { ActivityKind, Artifact, NormalizedActivity } from "@/types/jules";
 
 const KIND_META: Record<ActivityKind, { icon: LucideIcon; tint: string }> = {
@@ -53,9 +54,13 @@ export function ActivityItem({ activity }: { activity: NormalizedActivity }) {
         </div>
 
         {activity.body ? (
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground break-anywhere">
-            {activity.body}
-          </p>
+          activity.kind === "agentMessaged" ? (
+            <MarkdownContent className="mt-1">{activity.body}</MarkdownContent>
+          ) : (
+            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground break-anywhere">
+              {activity.body}
+            </p>
+          )
         ) : null}
 
         {/* Plan steps */}
