@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, GitBranch, GitPullRequest, LoaderCircle } from "lucide-react";
+import { ChevronRight, GitBranch, GitPullRequest } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -40,9 +40,6 @@ export function SessionCard({ session, onOpen }: SessionCardProps) {
 
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge className={cn("gap-1.5 border", sessionStateClasses(session.state))}>
-              {session.isActive ? (
-                <LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />
-              ) : null}
               {sessionStateLabel(session.state)}
             </Badge>
 

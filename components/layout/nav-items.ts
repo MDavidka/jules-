@@ -1,18 +1,14 @@
 import {
   BrainCircuit,
   Clock3,
-  FolderGit2,
   Github,
   House,
-  PanelsTopLeft,
   SquarePen,
   type LucideIcon,
 } from "lucide-react";
 
 export type ViewId =
   | "new-task"
-  | "projects"
-  | "skills"
   | "memory"
   | "repositories"
   | "automations"
@@ -29,8 +25,6 @@ export interface NavItem {
 /** Primary navigation, in the same order as the reference design. */
 export const NAV_ITEMS: NavItem[] = [
   { id: "new-task", label: "New Task", icon: SquarePen },
-  { id: "projects", label: "Projects", icon: FolderGit2 },
-  { id: "skills", label: "Skills & Plugins", icon: PanelsTopLeft },
   { id: "memory", label: "Memory", icon: BrainCircuit },
   { id: "repositories", label: "Repositories", icon: Github },
   { id: "automations", label: "Automations", icon: Clock3 },
@@ -39,8 +33,6 @@ export const NAV_ITEMS: NavItem[] = [
 
 export const VIEW_TITLES: Record<ViewId, string> = {
   "new-task": "New Task",
-  projects: "Projects",
-  skills: "Skills & Plugins",
   memory: "Memory",
   repositories: "Repositories",
   automations: "Automations",

@@ -14,8 +14,6 @@ import {
 import * as React from "react";
 import { useForm } from "react-hook-form";
 
-import { BrandMark } from "@/components/layout/brand-mark";
-import { NvidiaKeyCard } from "@/components/settings/nvidia-key-card";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,6 +40,9 @@ export function SettingsView() {
   const [showKey, setShowKey] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [nvidiaKey, setNvidiaKey] = React.useState("");
+  const [nvidiaConfigured, setNvidiaConfigured] = React.useState(false);
+  const [savingNvidia, setSavingNvidia] = React.useState(false);
 
   const {
     register,
@@ -52,6 +53,21 @@ export function SettingsView() {
     resolver: zodResolver(julesApiKeySchema),
     defaultValues: { apiKey: "" },
   });
+
+  React.useEffect(() => {
+    void fetch("/api/settings/nvidia-key").then((response) => response.json()).then((data) => setNvidiaConfigured(Boolean(data.configured))).catch(() => undefined);
+  }, []);
+
+  const saveNvidiaKey = async () => {
+    setSavingNvidia(true);
+    try {
+      const response = await fetch("/api/settings/nvidia-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: nvidiaKey }) });
+      if (!response.ok) throw new Error("Could not save NVIDIA API key.");
+      setNvidiaKey(""); setNvidiaConfigured(true);
+      toast({ title: "NVIDIA AI connected", description: "Your key is encrypted and stored server-side.", variant: "success" });
+    } catch (error) { toast({ title: "Could not save NVIDIA key", description: errorMessage(error), variant: "error" }); }
+    finally { setSavingNvidia(false); }
+  };
 
   const onSubmit = handleSubmit(async (values) => {
     setServerError(null);
@@ -84,21 +100,8 @@ export function SettingsView() {
     <div className="space-y-5">
       <div className="space-y-1">
         <h2 className="text-lg font-semibold tracking-tight text-foreground">Settings</h2>
-        <p className="text-sm text-muted-foreground">
-          Manage the two API connections Jules+ uses: Jules for coding, NVIDIA for the chat agent.
-        </p>
+        <p className="text-sm text-muted-foreground">Manage your Jules API connection.</p>
       </div>
-
-      <section className="space-y-3">
-        <div className="flex items-center gap-2.5">
-          <BrandMark className="h-5 w-5 rounded-md" iconClassName="h-3 w-3" />
-          <div className="space-y-0.5">
-            <h3 className="text-base font-semibold tracking-tight text-foreground">Jules</h3>
-            <p className="text-xs text-muted-foreground">
-              Runs the coding tasks and opens pull requests.
-            </p>
-          </div>
-        </div>
 
       {/* Connection status */}
       <div className="space-y-2.5 rounded-2xl border border-border/70 bg-card p-4">
@@ -182,6 +185,15 @@ export function SettingsView() {
         </Button>
       </form>
 
+      <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-4">
+        <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" aria-hidden="true" /><div><p className="text-sm font-medium">NVIDIA AI Builder</p><p className="text-xs text-muted-foreground">Use free NVIDIA-hosted models to understand tasks and gather memory.</p></div></div>
+        <form onSubmit={(event) => { event.preventDefault(); void saveNvidiaKey(); }} className="flex flex-col gap-2 sm:flex-row">
+          <Input type="password" value={nvidiaKey} onChange={(event) => setNvidiaKey(event.target.value)} placeholder={nvidiaConfigured ? "NVIDIA key saved — paste to replace" : "Paste NVIDIA API key"} autoComplete="off" className="font-mono text-sm" />
+          <Button type="submit" disabled={!nvidiaKey.trim() || savingNvidia}>{savingNvidia ? "Saving…" : nvidiaConfigured ? "Replace key" : "Save key"}</Button>
+        </form>
+        <p className="text-xs text-muted-foreground">Stored with the same AES-256-GCM protection as your Jules key. The browser never receives the key.</p>
+      </section>
+
       {/* Links */}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Button variant="outline" size="sm" asChild>
@@ -218,12 +230,6 @@ export function SettingsView() {
           </Button>
         </div>
       ) : null}
-
-      </section>
-
-      <hr className="border-border/60" />
-
-      <NvidiaKeyCard />
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>

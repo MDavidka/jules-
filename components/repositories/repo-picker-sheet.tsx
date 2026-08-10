@@ -48,7 +48,11 @@ export function RepoPickerSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="px-0 pb-safe">
+      <SheetContent
+        side="bottom"
+        className="px-0 pb-safe"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
         <SheetHeader className="pr-14">
           <SheetTitle>Select a repository</SheetTitle>
           <SheetDescription>

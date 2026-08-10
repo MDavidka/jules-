@@ -49,7 +49,7 @@ export function Sidebar({
       </div>
 
       <nav aria-label="Main navigation" className="px-3 pt-4">
-        <ul className="space-y-1">
+        <ul className="space-y-0.5">
           {NAV_ITEMS.map((item) => {
             const isActive = activeView === item.id;
 
@@ -76,14 +76,10 @@ export function Sidebar({
         </ul>
       </nav>
 
-      {/*
-        The repositories connected to Jules. Deliberately NOT titled "Projects":
-        that word now names the tab tracking active work, and two different meanings
-        in one sidebar was confusing.
-      */}
+      {/* Projects: the real repositories connected to Jules. */}
       <div className="mt-6 flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between px-5 pb-1">
-          <h2 className="text-sm font-medium text-muted-foreground">Repositories</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">Projects</h2>
           <button
             type="button"
             onClick={() => handleNavigate("repositories")}
@@ -109,7 +105,7 @@ export function Sidebar({
               No repositories yet. Install the Jules GitHub App to connect one.
             </p>
           ) : (
-            <ul className="space-y-1">
+            <ul className="space-y-0.5">
               {sources.map((source) => {
                 const isSelected = selectedSource === source.name;
 
@@ -139,13 +135,13 @@ export function Sidebar({
       </div>
 
       {/* Footer: real connection status, plus access to Settings. */}
-      <div className="border-t border-border/70 p-3">
+      <div className="p-3">
         <button
           type="button"
           onClick={() => handleNavigate("settings")}
           className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full brand-gradient text-sm font-semibold text-white">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
             {isLoadingSources ? (
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (

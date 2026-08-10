@@ -1,10 +1,11 @@
 "use client";
 
 import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { NVIDIA_MODELS } from "@/lib/nvidia-models";
+import { useNvidiaModels } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
-import { ChatView } from "@/components/chat/chat-view";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { AppHeader } from "@/components/layout/app-header";
 import { BrandMark } from "@/components/layout/brand-mark";
@@ -12,28 +13,20 @@ import { VIEW_TITLES, type ViewId } from "@/components/layout/nav-items";
 import { Sidebar } from "@/components/layout/sidebar";
 import { MemoryAttachSheet } from "@/components/memory/memory-attach-sheet";
 import { MemoryView } from "@/components/memory/memory-view";
-import { ProjectsView } from "@/components/projects/projects-view";
 import { RepoPickerSheet } from "@/components/repositories/repo-picker-sheet";
 import { RepositoriesView } from "@/components/repositories/repositories-view";
 import { SessionDetailView } from "@/components/sessions/session-detail-view";
 import { TaskComposer } from "@/components/sessions/task-composer";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
-import { SkillsView } from "@/components/skills/skills-view";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
-import { useAgentChat } from "@/hooks/use-agent-chat";
 import { useJulesConfig } from "@/hooks/use-jules-config";
 import { useMemory } from "@/hooks/use-memory";
-import {
-  useNvidiaConfig,
-  useNvidiaModels,
-  useSaveSelectedModel,
-} from "@/hooks/use-nvidia-config";
 import { useSessions } from "@/hooks/use-sessions";
 import { useSource, useSources } from "@/hooks/use-sources";
 import { ApiError } from "@/lib/api-client";
-import { DEFAULT_MODEL_ID } from "@/lib/nvidia-models";
 import { errorMessage } from "@/lib/utils";
 
 export function AppShell() {
@@ -69,12 +62,16 @@ function ConfiguredApp() {
   const [activeView, setActiveView] = React.useState<ViewId>("new-task");
   const [selectedSourceName, setSelectedSourceName] = React.useState<string | null>(null);
   const [branch, setBranch] = React.useState<string | null>(null);
+  const [model, setModel] = React.useState<string>(NVIDIA_MODELS[0].id);
+  const nvidiaModelsQuery = useNvidiaModels();
+  const nvidiaModels = nvidiaModelsQuery.models.length ? nvidiaModelsQuery.models : NVIDIA_MODELS;
+  const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [assistantPending, setAssistantPending] = React.useState(false);
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
 
   const [navOpen, setNavOpen] = React.useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = React.useState(false);
   const [memorySheetOpen, setMemorySheetOpen] = React.useState(false);
-  const [composerDraft, setComposerDraft] = React.useState<string | null>(null);
 
   const sourcesQuery = useSources({ enabled: true });
   const sources = React.useMemo(() => sourcesQuery.data?.items ?? [], [sourcesQuery.data]);
@@ -98,54 +95,6 @@ function ConfiguredApp() {
     setBranch(null);
   }, [selectedSourceName]);
 
-  // The branch selector moved out of the composer to make room for the model
-  // picker, so the effective branch is the repo default until something overrides it.
-  const effectiveBranch = branch ?? selectedSource?.defaultBranch ?? null;
-
-  /* ------------------------------ NVIDIA agent ----------------------------- */
-
-  const nvidiaConfigQuery = useNvidiaConfig();
-  const modelsQuery = useNvidiaModels();
-  const saveSelectedModel = useSaveSelectedModel();
-
-  const models = React.useMemo(() => modelsQuery.data?.items ?? [], [modelsQuery.data]);
-  const [selectedModel, setSelectedModel] = React.useState<string>(DEFAULT_MODEL_ID);
-
-  // Adopt the persisted model choice once, without fighting a later manual change.
-  const hasAdoptedStoredModel = React.useRef(false);
-  React.useEffect(() => {
-    const stored = nvidiaConfigQuery.data?.defaultModel;
-    if (hasAdoptedStoredModel.current || !stored) return;
-
-    hasAdoptedStoredModel.current = true;
-    setSelectedModel(stored);
-  }, [nvidiaConfigQuery.data?.defaultModel]);
-
-  // Keep the selection valid if the live catalog omits it.
-  React.useEffect(() => {
-    if (models.length === 0) return;
-    if (models.some((model) => model.id === selectedModel)) return;
-
-    setSelectedModel(modelsQuery.data?.defaultModel ?? models[0]!.id);
-  }, [models, modelsQuery.data?.defaultModel, selectedModel]);
-
-  const handleModelChange = (modelId: string) => {
-    setSelectedModel(modelId);
-    // Persistence is a convenience; a failure here must not interrupt the chat.
-    saveSelectedModel.mutate(modelId);
-  };
-
-  const chat = useAgentChat({
-    model: selectedModel,
-    source: selectedSourceName,
-    branch: effectiveBranch,
-  });
-
-  // Only treat the key as missing once the status has actually loaded.
-  const needsNvidiaKey = nvidiaConfigQuery.data ? !nvidiaConfigQuery.data.configured : false;
-
-  /* --------------------------------- Memory -------------------------------- */
-
   const memoryQuery = useMemory();
   const pinnedNotes = React.useMemo(
     () =>
@@ -154,8 +103,6 @@ function ConfiguredApp() {
       ),
     [memoryQuery.data, selectedSourceName],
   );
-
-  /* -------------------------------- Sessions ------------------------------- */
 
   // Keep the sessions list warm so the header/dashboard reflect live state.
   const sessionsQuery = useSessions({ enabled: true });
@@ -177,17 +124,16 @@ function ConfiguredApp() {
     setActiveView("session");
   };
 
-  const handleSendMessage = async (message: string) => {
-    if (needsNvidiaKey) {
-      toast({
-        title: "NVIDIA API key required",
-        description: "Add a key in Settings to chat with a model.",
-        variant: "info",
-      });
-      return;
-    }
-
-    await chat.send(message);
+  const handleSubmitTask = async (prompt: string) => {
+    const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
+    setAssistantPending(true);
+    setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
+    const response = await fetch("/api/nvidia/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${prompt}${memoryBlock}`, model, source: selectedSourceName, history: assistantMessages }) });
+    if (!response.ok || !response.body) { const data = await response.json().catch(() => null); setAssistantPending(false); throw new Error(data?.message ?? "NVIDIA assistant request failed."); }
+    const reader = response.body.getReader(); const decoder = new TextDecoder();
+    while (true) { const result = await reader.read(); if (result.done) break; const token = decoder.decode(result.value, { stream: true }); setAssistantMessages((current) => { const next = [...current]; const last = next[next.length - 1]; if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token }; return next; }); }
+    setAssistantPending(false);
+    toast({ title: "NVIDIA assistant replied", description: "Repository context and next steps are ready.", variant: "success" });
   };
 
   const handleRefresh = () => {
@@ -195,20 +141,8 @@ function ConfiguredApp() {
     void sessionsQuery.refetch();
   };
 
-  // Seed prompts adapt to whether a repository is in context yet.
-  const suggestions = React.useMemo(() => {
-    if (!selectedSource) {
-      return ["Which repositories can you see?", "What do you already remember about me?"];
-    }
-
-    return [
-      `What does ${selectedSource.fullName} do? Save the important parts to memory.`,
-      "Find an open issue worth fixing and brief Jules on it.",
-      "Where is this project most likely to break?",
-    ];
-  }, [selectedSource]);
-
-  const headerTitle = activeView === "session" ? VIEW_TITLES.session : VIEW_TITLES[activeView];
+  const headerTitle =
+    activeView === "session" ? VIEW_TITLES.session : VIEW_TITLES[activeView];
 
   const sidebar = (
     <Sidebar
@@ -228,7 +162,7 @@ function ConfiguredApp() {
   return (
     <div className="flex min-h-dvh bg-background">
       {/* Permanent sidebar on desktop. */}
-      <aside className="hidden w-72 shrink-0 border-r border-border/70 lg:block">
+      <aside className="hidden w-72 shrink-0 lg:block">
         <div className="sticky top-0 h-dvh">{sidebar}</div>
       </aside>
 
@@ -252,46 +186,7 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <ChatView
-                messages={chat.messages}
-                traces={chat.traces}
-                timestamps={chat.timestamps}
-                pendingAction={chat.pendingAction}
-                isSending={chat.isSending}
-                isResolving={chat.isResolving}
-                error={chat.error}
-                truncated={chat.truncated}
-                onConfirm={() => void chat.resolve(true)}
-                onSkip={() => void chat.resolve(false)}
-                onDismissError={chat.dismissError}
-                suggestions={suggestions}
-                onUseSuggestion={setComposerDraft}
-                needsNvidiaKey={needsNvidiaKey}
-                onOpenSettings={() => handleNavigate("settings")}
-                repoLabel={selectedSource?.fullName ?? null}
-              />
-
-              {/* Live task count, so chatting never hides work already in progress. */}
-              {activeSessions.length > 0 && chat.messages.length === 0 ? (
-                <div className="flex justify-center px-6 pb-40 lg:pb-4">
-                  <button
-                    type="button"
-                    onClick={() => handleNavigate("dashboard")}
-                    className="inline-flex touch-target items-center gap-2 rounded-full border border-border/80 bg-card px-4 text-sm text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <LoaderCircle
-                      className="h-3.5 w-3.5 animate-spin text-sky-400"
-                      aria-hidden="true"
-                    />
-                    {activeSessions.length} task{activeSessions.length === 1 ? "" : "s"} running
-                  </button>
-                </div>
-              ) : (
-                // Spacer so the fixed mobile composer never covers the last turn.
-                <div className="h-40 shrink-0 lg:hidden" aria-hidden="true" />
-              )}
-            </div>
+            <NewTaskView messages={assistantMessages} />
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -300,14 +195,6 @@ function ConfiguredApp() {
                   selectedSource={selectedSource}
                   onOpenSession={handleOpenSession}
                   onNewTask={() => handleNavigate("new-task")}
-                />
-              ) : activeView === "projects" ? (
-                <ProjectsView
-                  onOpenChat={(sourceName) => {
-                    handleSelectSource(sourceName);
-                    handleNavigate("new-task");
-                  }}
-                  onOpenSession={handleOpenSession}
                 />
               ) : activeView === "repositories" ? (
                 <RepositoriesView
@@ -320,8 +207,6 @@ function ConfiguredApp() {
                 <MemoryView selectedSource={selectedSourceName} />
               ) : activeView === "automations" ? (
                 <AutomationsView />
-              ) : activeView === "skills" ? (
-                <SkillsView enabled />
               ) : activeView === "settings" ? (
                 <SettingsView />
               ) : activeView === "session" && openSessionName ? (
@@ -336,23 +221,20 @@ function ConfiguredApp() {
 
           {/* Composer: fixed to the bottom on mobile, inline on desktop. */}
           {activeView === "new-task" ? (
-            <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border/50 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:border-t-0 lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
+            <div className="fixed inset-x-0 bottom-0 z-20 bg-background/95 px-3 pb-3 pt-3 pb-safe backdrop-blur-md lg:static lg:bg-transparent lg:pb-6 lg:backdrop-blur-none">
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
                   source={selectedSource}
-                  branch={effectiveBranch}
-                  models={models}
-                  isLoadingModels={modelsQuery.isPending}
-                  selectedModel={selectedModel}
-                  onModelChange={handleModelChange}
-                  onSubmit={handleSendMessage}
-                  isSubmitting={chat.isSending}
+                  branch={branch}
+                  onBranchChange={setBranch}
+                  model={model}
+                  models={nvidiaModels}
+                  onModelChange={setModel}
+                  onSubmit={handleSubmitTask}
+                  isSubmitting={assistantPending}
                   attachedMemoryCount={pinnedNotes.length}
                   onOpenMemory={() => setMemorySheetOpen(true)}
-                  // Block input while a confirmation card is waiting on the user.
-                  disabled={needsNvidiaKey || Boolean(chat.pendingAction)}
-                  draft={composerDraft}
-                  onDraftConsumed={() => setComposerDraft(null)}
+                  disabled={sources.length === 0 && !sourcesQuery.isPending}
                 />
               </div>
             </div>
@@ -378,6 +260,17 @@ function ConfiguredApp() {
   );
 }
 
+/** The near-empty hero state from the reference design. */
+function NewTaskView({ messages }: { messages: Array<{ role: "user" | "assistant"; content: string }> }) {
+  return (
+    <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-48 pt-6 sm:px-6 lg:pb-10">
+      {messages.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the NVIDIA assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
+      ) : <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] whitespace-pre-wrap px-5 py-3 text-base leading-relaxed text-foreground"}>{message.content}{message.role === "assistant" && index === messages.length - 1 ? <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-primary align-middle" aria-label="Assistant is typing" /> : null}</div>)}</div>}
+    </div>
+  );
+}
+
 function FullScreenLoader() {
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background">
@@ -399,21 +292,21 @@ function FullScreenLoader() {
 function ConfigurationErrorScreen({ message }: { message: string }) {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-5 py-10">
-      <div className="w-full max-w-md space-y-4 rounded-2xl border border-amber-500/30 bg-amber-950/20 p-5">
-        <div className="flex items-center gap-2.5">
-          <TriangleAlert className="h-5 w-5 shrink-0 text-amber-400" aria-hidden="true" />
-          <h1 className="text-base font-semibold text-amber-50">Configuration required</h1>
-        </div>
-        <p role="alert" className="text-sm leading-relaxed text-amber-100/85 break-anywhere">
-          {message}
-        </p>
-        <div className="space-y-2 rounded-xl border border-amber-500/20 bg-black/30 p-3">
-          <p className="text-xs font-medium text-amber-100/90">Required environment variables</p>
-          <ul className="space-y-1 font-mono text-[11px] leading-relaxed text-amber-100/70">
+      <div className="w-full max-w-md space-y-4">
+        <Alert variant="destructive">
+          <TriangleAlert aria-hidden="true" />
+          <AlertTitle>Configuration required</AlertTitle>
+          <AlertDescription>
+            <p className="break-anywhere">{message}</p>
+          </AlertDescription>
+        </Alert>
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3">
+          <p className="text-xs font-medium text-foreground">Required environment variables</p>
+          <ul className="space-y-1 font-mono text-[11px] leading-relaxed text-muted-foreground">
             <li>MONGO_URI</li>
             <li>JULES_KEY_ENCRYPTION_SECRET</li>
           </ul>
-          <p className="text-[11px] leading-relaxed text-amber-100/60">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
             Copy .env.example to .env.local, fill both values, then restart the dev server.
           </p>
         </div>

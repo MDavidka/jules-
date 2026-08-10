@@ -1,81 +1,67 @@
 "use client";
 
-import { ArrowUp, BrainCircuit, LoaderCircle, Mic } from "lucide-react";
+import { ArrowUp, BrainCircuit, LoaderCircle, Mic, Sparkles } from "lucide-react";
+import { providerLogo } from "@/lib/nvidia-models";
+import type { NvidiaModel } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
-import { ModelSelect } from "@/components/models/model-select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { useSpeechDictation } from "@/hooks/use-speech-dictation";
-import { cn } from "@/lib/utils";
-import { CHAT_MESSAGE_MAX_LENGTH } from "@/lib/validators";
-import type { NvidiaModel } from "@/lib/nvidia-models";
+import { cn, errorMessage } from "@/lib/utils";
+import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from "@/lib/validators";
 import type { NormalizedSource } from "@/types/jules";
-
-/** Minimum characters before the send button enables. */
-const MESSAGE_MIN_LENGTH = 2;
 
 interface TaskComposerProps {
   source: NormalizedSource | null;
-  /** Effective branch, shown in the helper line. Chosen via the repo picker now. */
   branch: string | null;
-  /** Models offered in the picker (curated catalog ∩ live NVIDIA catalog). */
-  models: NvidiaModel[];
-  isLoadingModels: boolean;
-  selectedModel: string;
-  onModelChange: (modelId: string) => void;
-  onSubmit: (message: string) => Promise<void> | void;
+  onBranchChange: (branch: string) => void;
+  model: string;
+  models: readonly NvidiaModel[];
+  onModelChange: (model: string) => void;
+  onSubmit: (prompt: string) => Promise<void>;
   isSubmitting: boolean;
-  /** Number of pinned memory notes that will travel with a Jules task. */
+  /** Number of pinned memory notes that will be attached. */
   attachedMemoryCount: number;
   onOpenMemory: () => void;
   disabled?: boolean;
-  /** Externally supplied draft, e.g. a tapped suggestion chip. */
-  draft?: string | null;
-  onDraftConsumed?: () => void;
 }
 
 /**
- * The chat composer. Fixed to the bottom of the viewport on mobile with safe-area
- * padding, inline within the column on desktop.
- *
- * The old branch selector was replaced by the NVIDIA model picker: messages here go
- * to the agent, not straight to Jules, so the model matters at send time while the
- * branch only matters when a Jules task actually starts.
+ * The task composer. Fixed to the bottom of the viewport on mobile with
+ * safe-area padding, inline within the column on desktop.
  */
 export function TaskComposer({
   source,
   branch,
+  onBranchChange,
+  model,
   models,
-  isLoadingModels,
-  selectedModel,
   onModelChange,
   onSubmit,
   isSubmitting,
   attachedMemoryCount,
   onOpenMemory,
   disabled = false,
-  draft,
-  onDraftConsumed,
 }: TaskComposerProps) {
-  const [message, setMessage] = React.useState("");
+  const [prompt, setPrompt] = React.useState("");
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
 
   const dictation = useSpeechDictation({
     onTranscript: (text) => {
-      setMessage((current) => (current ? `${current.trimEnd()} ${text}` : text));
+      setPrompt((current) => (current ? `${current.trimEnd()} ${text}` : text));
       textareaRef.current?.focus();
     },
   });
-
-  // Adopt an externally supplied draft (suggestion chips) and focus the field.
-  React.useEffect(() => {
-    if (!draft) return;
-    setMessage(draft);
-    textareaRef.current?.focus();
-    onDraftConsumed?.();
-  }, [draft, onDraftConsumed]);
 
   // Auto-grow the textarea up to a capped height.
   React.useLayoutEffect(() => {
@@ -84,36 +70,37 @@ export function TaskComposer({
 
     element.style.height = "auto";
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
-  }, [message]);
+  }, [prompt]);
 
-  const trimmedLength = message.trim().length;
-  const isOverLimit = trimmedLength > CHAT_MESSAGE_MAX_LENGTH;
-  const canSubmit = !disabled && !isSubmitting && trimmedLength >= MESSAGE_MIN_LENGTH && !isOverLimit;
+  const branches = source?.branches ?? [];
+  const effectiveBranch = branch ?? source?.defaultBranch ?? null;
+  const trimmedLength = prompt.trim().length;
+  const isOverLimit = trimmedLength > PROMPT_MAX_LENGTH;
+  const canSubmit =
+    !disabled && !isSubmitting && Boolean(source) && trimmedLength >= PROMPT_MIN_LENGTH && !isOverLimit;
 
   const handleSubmit = async () => {
     setValidationError(null);
 
-    if (trimmedLength < MESSAGE_MIN_LENGTH) {
-      setValidationError("Type a message first.");
+    if (!source) {
+      setValidationError("Pick a repository first.");
+      return;
+    }
+    if (trimmedLength < PROMPT_MIN_LENGTH) {
+      setValidationError(`Describe the task in at least ${PROMPT_MIN_LENGTH} characters.`);
       return;
     }
     if (isOverLimit) {
-      setValidationError(
-        `Keep the message under ${CHAT_MESSAGE_MAX_LENGTH.toLocaleString()} characters.`,
-      );
+      setValidationError(`Keep the prompt under ${PROMPT_MAX_LENGTH.toLocaleString()} characters.`);
       return;
     }
 
-    // Clear optimistically: the transcript owns the message once it is sent.
-    const outgoing = message.trim();
-    setMessage("");
-
     try {
-      await onSubmit(outgoing);
-    } catch {
-      // Restore the draft so nothing is lost if the send never left the client.
-      setMessage(outgoing);
-      setValidationError("Could not send that message. Try again.");
+      await onSubmit(prompt.trim());
+      setPrompt("");
+      setValidationError(null);
+    } catch (error) {
+      setValidationError(errorMessage(error, "Could not submit the task."));
     }
   };
 
@@ -142,38 +129,37 @@ export function TaskComposer({
   return (
     <div className="w-full">
       {validationError ? (
-        <p role="alert" className="mb-2 px-1 text-sm text-red-400">
-          {validationError}
-        </p>
+        <Alert variant="destructive" className="mb-2">
+          <AlertDescription>{validationError}</AlertDescription>
+        </Alert>
       ) : null}
 
       <div
         className={cn(
-          "rounded-3xl border border-border/90 bg-[hsl(0_0%_13%)] p-2.5 shadow-2xl shadow-black/40 transition-colors",
-          "focus-within:border-primary/40",
+          "rounded-[1.75rem] border border-border/70 bg-[hsl(0_0%_11.76%)] p-3 shadow-2xl shadow-black/30 transition-colors sm:rounded-[2rem] sm:p-4",
           disabled && "opacity-60",
         )}
       >
         <label htmlFor="task-prompt" className="sr-only">
-          Message the Jules+ agent
+          Describe the task for Jules
         </label>
         <textarea
           id="task-prompt"
           ref={textareaRef}
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={handleKeyDown}
           rows={2}
           disabled={disabled || isSubmitting}
-          maxLength={CHAT_MESSAGE_MAX_LENGTH + 100}
+          maxLength={PROMPT_MAX_LENGTH + 100}
           aria-invalid={Boolean(validationError)}
           aria-describedby="task-prompt-help"
-          placeholder="Help you write code, debug and ship production-ready work."
-          className="max-h-[200px] w-full resize-none bg-transparent px-2.5 pb-2 pt-1.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
+          placeholder="Help you write code, debug and ship production-ready work. Type / for skills & integrations."
+          className="max-h-[160px] w-full resize-none bg-transparent px-2 pb-2 pt-1 text-lg leading-relaxed text-foreground outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 disabled:cursor-not-allowed sm:max-h-[200px] sm:px-2.5 sm:pb-3 sm:pt-1.5 sm:text-2xl"
         />
 
         <div className="flex items-center gap-1.5 pt-0.5">
-          {/* Saved memory the agent can attach to a Jules task. */}
+          {/* Attach saved memory notes to this prompt. */}
           <button
             type="button"
             onClick={onOpenMemory}
@@ -181,7 +167,7 @@ export function TaskComposer({
           >
             <BrainCircuit className="h-[18px] w-[18px]" aria-hidden="true" />
             <span className="sr-only">
-              Manage memory attached to this project ({attachedMemoryCount} pinned)
+              Manage memory attached to this task ({attachedMemoryCount} pinned)
             </span>
             {attachedMemoryCount > 0 ? (
               <span
@@ -193,14 +179,15 @@ export function TaskComposer({
             ) : null}
           </button>
 
-          {/* Model selector - replaces the old branch picker. */}
-          <ModelSelect
-            models={models}
-            value={selectedModel}
-            onChange={onModelChange}
-            disabled={disabled}
-            isLoading={isLoadingModels}
-          />
+          <Select value={model} onValueChange={onModelChange} disabled={disabled}>
+            <SelectTrigger aria-label="NVIDIA model" className="h-10 min-h-10 w-auto max-w-[12rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
+              <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="w-[min(18rem,90vw)]">
+              {models.map((item) => <SelectItem key={item.id} value={item.id}><span className="flex items-center gap-2"><img src={providerLogo(item.provider)} alt="" className="size-4" onError={(event) => { event.currentTarget.style.display = "none"; }} />{item.label}<span className="text-xs text-muted-foreground">{item.provider}</span></span></SelectItem>)}
+            </SelectContent>
+          </Select>
 
           <div className="ml-auto flex items-center gap-1">
             <button
@@ -216,7 +203,7 @@ export function TaskComposer({
             >
               <Mic className="h-[18px] w-[18px]" aria-hidden="true" />
               <span className="sr-only">
-                {dictation.isListening ? "Stop dictation" : "Dictate your message"}
+                {dictation.isListening ? "Stop dictation" : "Dictate the task"}
               </span>
             </button>
 
@@ -236,35 +223,16 @@ export function TaskComposer({
               ) : (
                 <ArrowUp className="h-[18px] w-[18px]" aria-hidden="true" />
               )}
-              <span className="sr-only">Send message to the agent</span>
+              <span className="sr-only">Submit task to Jules</span>
             </button>
           </div>
         </div>
       </div>
 
-      <p
-        id="task-prompt-help"
-        className="mt-2 px-2 text-[11px] leading-relaxed text-muted-foreground"
-      >
-        {source ? (
-          <>
-            Context: <span className="text-foreground/80">{source.fullName}</span>
-            {branch ? (
-              <>
-                {" · "}
-                <span className="text-foreground/80">{branch}</span>
-              </>
-            ) : null}
-            {attachedMemoryCount > 0 ? ` · ${attachedMemoryCount} memory note(s) attached` : ""}
-          </>
-        ) : (
-          "Select a repository to give the agent context."
-        )}
-      </p>
 
       {/* Dictation status for screen readers. */}
       <p aria-live="polite" className="sr-only">
-        {dictation.isListening ? "Listening. Speak your message." : ""}
+        {dictation.isListening ? "Listening. Speak your task." : ""}
       </p>
     </div>
   );

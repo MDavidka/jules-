@@ -1,6 +1,6 @@
 "use client";
 
-import { Inbox, LoaderCircle, SquarePen } from "lucide-react";
+import { Inbox, SquarePen } from "lucide-react";
 import * as React from "react";
 
 import { SessionCard } from "@/components/dashboard/session-card";
@@ -64,10 +64,7 @@ export function DashboardView({
             <h2 className="text-lg font-semibold tracking-tight text-foreground">Dashboard</h2>
             <p className="text-sm text-muted-foreground">
               {activeCount > 0 ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <LoaderCircle className="h-3 w-3 animate-spin text-sky-400" aria-hidden="true" />
-                  {activeCount} running · refreshing every {POLL_INTERVALS.ACTIVE_LIST_MS / 1000}s
-                </span>
+                <span>{activeCount} active · refreshing every {POLL_INTERVALS.ACTIVE_LIST_MS / 1000}s</span>
               ) : (
                 `Refreshing every ${POLL_INTERVALS.IDLE_MS / 1000}s`
               )}
@@ -169,7 +166,7 @@ export function DashboardView({
 
           {/* Live region so polling updates are announced without stealing focus. */}
           <p aria-live="polite" className="sr-only">
-            {visibleSessions.length} sessions shown, {activeCount} currently running.
+            {visibleSessions.length} sessions shown, {activeCount} active.
           </p>
         </>
       )}

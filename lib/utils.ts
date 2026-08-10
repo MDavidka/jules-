@@ -113,13 +113,3 @@ export function errorMessage(error: unknown, fallback = "Something went wrong.")
   if (typeof error === "string" && error) return error;
   return fallback;
 }
-
-
-/** Wall-clock time for chat bubbles, e.g. "19:49". */
-export function formatClockTime(input: string | null | undefined): string {
-  if (!input) return "";
-  const date = new Date(input);
-  if (Number.isNaN(date.getTime())) return "";
-
-  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-}
