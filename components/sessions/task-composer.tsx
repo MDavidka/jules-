@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, BrainCircuit, LoaderCircle, Mic } from "lucide-react";
+import { ArrowUp, BrainCircuit, LoaderCircle, Mic, Sparkles } from "lucide-react";
 import { providerLogo } from "@/lib/nvidia-models";
 import type { NvidiaModel } from "@/hooks/use-nvidia-models";
 import * as React from "react";
@@ -180,8 +180,8 @@ export function TaskComposer({
           </button>
 
           <Select value={model} onValueChange={onModelChange} disabled={disabled}>
-            <SelectTrigger aria-label="NVIDIA model" className="h-10 min-h-10 w-auto max-w-[12rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-2.5 pr-2.5 text-[13px] font-medium">
-              {models.find((item) => item.id === model) ? <img src={providerLogo(models.find((item) => item.id === model)?.provider ?? "NVIDIA")} alt="" className="size-4" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
+            <SelectTrigger aria-label="NVIDIA model" className="h-10 min-h-10 w-auto max-w-[12rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
+              <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="w-[min(18rem,90vw)]">
