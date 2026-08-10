@@ -40,6 +40,7 @@ export async function POST(request: Request) {
       history?: unknown;
       source?: unknown;
       branch?: unknown;
+      memoryContext?: unknown;
       attachments?: unknown;
       deepResearch?: unknown;
     };
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
       : [];
     const source = typeof body.source === "string" ? body.source : "";
     const branch = typeof body.branch === "string" && body.branch.trim() ? body.branch.trim() : undefined;
+    const memoryContext = typeof body.memoryContext === "string" ? body.memoryContext.trim().slice(0, 24_000) : "";
     const attachments = normalizeAttachments(body.attachments);
     const invalidImage = attachments.find((attachment) => attachment.type.startsWith("image/") && !isSafeImageDataUrl(attachment.dataUrl));
     if (invalidImage) {
@@ -91,10 +93,15 @@ export async function POST(request: Request) {
             send({
               type: "jules_fix_proposal",
               proposal: {
-                prompt,
+                prompt: buildJulesFixPrompt({
+                  userRequest: prompt,
+                  source,
+                  branch,
+                  memoryContext,
+                }),
                 source,
                 branch,
-                title: buildFixTitle(prompt),
+                title: buildFixTitle(prompt, source),
               },
             });
           }
@@ -137,7 +144,14 @@ export async function POST(request: Request) {
 
           sendStatus("working");
 
-          const userContent = [prompt, research, deepFindings, fileContext, imageContext]
+          const userContent = [
+            prompt,
+            memoryContext ? `Known project memory:\n${memoryContext}` : "",
+            research,
+            deepFindings,
+            fileContext,
+            imageContext,
+          ]
             .filter(Boolean)
             .join("\n\n");
 
@@ -312,7 +326,53 @@ function shouldRunDeepResearch(prompt: string) {
   return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through)\b/i.test(prompt);
 }
 
-function buildFixTitle(prompt: string) {
-  const compact = prompt.replace(/\s+/g, " ").trim();
-  return `Fix: ${compact.slice(0, 160)}`;
+function buildFixTitle(prompt: string, source: string) {
+  const compact = prompt.replace(/\s+/g, " ").trim().replace(/^fix:\s*/i, "");
+  const repository = source.replace(/^sources\/github\//, "") || "repository";
+  return `Investigate and fix ${repository}: ${compact.slice(0, 120)}`;
+}
+
+function buildJulesFixPrompt({
+  userRequest,
+  source,
+  branch,
+  memoryContext,
+}: {
+  userRequest: string;
+  source: string;
+  branch?: string;
+  memoryContext: string;
+}) {
+  const repository = source.replace(/^sources\/github\//, "") || "the selected repository";
+  const selectedBranch = branch || "the repository default branch";
+  const memorySection = memoryContext
+    ? `Known project memory (use it as context, not as a substitute for inspecting the code):\n${memoryContext}`
+    : "No saved project memory was attached. Inspect the repository and establish the relevant conventions before editing.";
+
+  return [
+    "Act as the implementation engineer for a repository fix.",
+    `Repository: ${repository}`,
+    `Working branch: ${selectedBranch}`,
+    "",
+    "Objective",
+    "Diagnose and resolve the problem described below. Do not merely restate or copy the report: inspect the repository, identify the actual root cause, and implement the smallest complete production-quality fix.",
+    "",
+    `User-reported problem:\n${userRequest}`,
+    "",
+    memorySection,
+    "",
+    "Required approach",
+    "1. Inspect the relevant code paths, configuration, and existing patterns before making changes.",
+    "2. Reproduce or reason through the failure and identify its root cause.",
+    "3. Implement a focused fix that preserves existing behavior outside this issue.",
+    "4. Update related UI, API, types, or documentation when the fix requires it.",
+    "5. Run the most relevant available checks and report their results, including any environment limitations.",
+    "6. Summarize the root cause, changed files, verification, and any follow-up risks.",
+    "",
+    "Acceptance criteria",
+    "- The reported problem is resolved rather than hidden or bypassed.",
+    "- The implementation follows the repository's existing architecture and conventions.",
+    "- Existing functionality remains intact.",
+    "- Verification evidence is included in the final report.",
+  ].join("\n");
 }

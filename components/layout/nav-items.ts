@@ -1,10 +1,9 @@
 import {
-  BrainCircuit,
   Clock3,
-  Github,
   House,
   SquarePen,
   SquareTerminal,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 
@@ -27,8 +26,7 @@ export interface NavItem {
 /** Primary navigation, in the same order as the reference design. */
 export const NAV_ITEMS: NavItem[] = [
   { id: "new-task", label: "New Task", icon: SquarePen },
-  { id: "memory", label: "Memory", icon: BrainCircuit },
-  { id: "repositories", label: "Repositories", icon: Github },
+  { id: "memory", label: "Memory", icon: Workflow },
   { id: "automations", label: "Automations", icon: Clock3 },
   { id: "dashboard", label: "Sessions", icon: House },
   { id: "checks", label: "SSH / Checks", icon: SquareTerminal },

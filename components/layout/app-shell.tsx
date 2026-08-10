@@ -30,7 +30,7 @@ import { useMemory } from "@/hooks/use-memory";
 import { useSessions } from "@/hooks/use-sessions";
 import { useSource, useSources } from "@/hooks/use-sources";
 import { ApiError, queryKeys } from "@/lib/api-client";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 export function AppShell() {
   const configQuery = useJulesConfig();
@@ -179,7 +179,13 @@ function ConfiguredApp() {
   };
 
   const handleSubmitTask = async (prompt: string, attachments: AgentAttachment[]) => {
-    const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
+    const memoryContext = pinnedNotes
+      .map((note) => {
+        const title = note.title?.trim() ? `${note.title.trim()}: ` : "";
+        const data = note.data && Object.keys(note.data).length > 0 ? ` Data: ${JSON.stringify(note.data)}` : "";
+        return `- ${title}${note.content.trim()}${data}`;
+      })
+      .join("\n");
     setAssistantPending(true);
     setAssistantActivity("thinking");
     setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
@@ -189,10 +195,11 @@ function ConfiguredApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: `${prompt}${memoryBlock}`,
+          prompt,
           model: model || DEFAULT_NVIDIA_MODEL_ID,
           source: selectedSource?.name ?? selectedSourceName,
           branch: branch ?? selectedSource?.defaultBranch ?? undefined,
+          memoryContext,
           attachments,
           history: assistantMessages,
         }),
@@ -350,7 +357,10 @@ function ConfiguredApp() {
           {activeView === "new-task" ? (
             <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
           ) : (
-            <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
+            <div className={cn(
+              "mx-auto w-full flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10",
+              activeView === "dashboard" ? "max-w-5xl" : "max-w-3xl",
+            )}>
               {activeView === "dashboard" ? (
                 <SessionsView
                   enabled

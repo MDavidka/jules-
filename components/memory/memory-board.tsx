@@ -1,6 +1,6 @@
 "use client";
 
-import { Braces, FileCode2, Github, Layers, Link2, StickyNote } from "lucide-react";
+import { Braces, FileCode2, Github, Layers, Link2, Minus, Plus, RotateCcw, StickyNote } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import * as React from "react";
 
@@ -72,6 +72,11 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
     return edges;
   }, [positionById, positioned]);
 
+  const [zoom, setZoom] = React.useState(1);
+  const zoomIn = () => setZoom((value) => Math.min(1.8, Number((value + 0.15).toFixed(2))));
+  const zoomOut = () => setZoom((value) => Math.max(0.65, Number((value - 0.15).toFixed(2))));
+  const resetZoom = () => setZoom(1);
+
   if (notes.length === 0) {
     return (
       <div
@@ -92,37 +97,84 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
       role="group"
       aria-label="Memory board"
       className={cn(
-        "scrollbar-thin dot-grid max-h-[62dvh] overflow-auto rounded-3xl border border-border/70 bg-card/40",
+        "relative scrollbar-thin dot-grid min-h-[24rem] max-h-[70dvh] overflow-auto rounded-3xl border border-border/70 bg-card/40",
         className,
       )}
     >
-      <div className="relative" style={{ width, height }}>
-        <svg
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          width={width}
-          height={height}
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-xl border border-white/10 bg-background/80 p-1 shadow-lg backdrop-blur-md">
+        <button
+          type="button"
+          onClick={zoomOut}
+          disabled={zoom <= 0.65}
+          aria-label="Zoom out memory board"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40"
         >
-          {links.map((link) => (
-            <path
-              key={link.key}
-              d={link.path}
-              fill="none"
-              stroke="hsl(0 0% 72%)"
-              strokeOpacity={0.55}
-              strokeWidth={1.25}
+          <Minus className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={resetZoom}
+          aria-label={`Reset memory board zoom, currently ${Math.round(zoom * 100)} percent`}
+          className="min-w-14 rounded-lg px-2 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          onClick={zoomIn}
+          disabled={zoom >= 1.8}
+          aria-label="Zoom in memory board"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40"
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={resetZoom}
+          aria-label="Reset memory board zoom"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground"
+        >
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="relative" style={{ width: width * zoom, height: height * zoom }}>
+        <div
+          className="relative"
+          style={{
+            width,
+            height,
+            transform: `scale(${zoom})`,
+            transformOrigin: "top left",
+          }}
+        >
+          <svg
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            width={width}
+            height={height}
+          >
+            {links.map((link) => (
+              <path
+                key={link.key}
+                d={link.path}
+                fill="none"
+                stroke="hsl(0 0% 72%)"
+                strokeOpacity={0.55}
+                strokeWidth={1.25}
+              />
+            ))}
+          </svg>
+
+          {positioned.map(({ note, x, y, height: cardHeight }) => (
+            <MemoryCard
+              key={note.id}
+              note={note}
+              style={{ left: x, top: y, width: CARD_WIDTH, minHeight: cardHeight }}
+              onSelect={onSelectNote}
             />
           ))}
-        </svg>
-
-        {positioned.map(({ note, x, y, height: cardHeight }) => (
-          <MemoryCard
-            key={note.id}
-            note={note}
-            style={{ left: x, top: y, width: CARD_WIDTH, minHeight: cardHeight }}
-            onSelect={onSelectNote}
-          />
-        ))}
+        </div>
       </div>
     </div>
   );

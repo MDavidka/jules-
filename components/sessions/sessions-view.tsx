@@ -34,10 +34,8 @@ export function SessionsView({
   onNewTask,
 }: SessionsViewProps) {
   const [filter, setFilter] = React.useState<Filter>("all");
-  const [scope, setScope] = React.useState<"repo" | "all">("all");
-
-  const sourceFilter = scope === "repo" ? (selectedSource?.name ?? null) : null;
-  const sessionsQuery = useSessions({ enabled, source: sourceFilter });
+  const sourceFilter = selectedSource?.name ?? null;
+  const sessionsQuery = useSessions({ enabled: enabled && Boolean(selectedSource), source: sourceFilter });
 
   const sessions = React.useMemo(() => sessionsQuery.data?.items ?? [], [sessionsQuery.data]);
   const activeCount = sessionsQuery.data?.activeCount ?? 0;
@@ -102,26 +100,22 @@ export function SessionsView({
               </button>
             ))}
           </div>
-
           {selectedSource ? (
-            <button
-              type="button"
-              onClick={() => setScope((current) => (current === "repo" ? "all" : "repo"))}
-              aria-pressed={scope === "repo"}
-              className={
-                scope === "repo"
-                  ? "min-h-11 truncate rounded-full border border-primary/40 bg-primary/15 px-4 text-xs font-medium text-primary"
-                  : "min-h-11 truncate rounded-full border border-white/[0.08] bg-card/70 px-4 text-xs font-medium text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground"
-              }
-            >
-              {scope === "repo" ? `Only ${selectedSource.fullName}` : "Filter to this repo"}
-            </button>
+            <span className="truncate rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-medium text-primary">
+              {selectedSource.fullName}
+            </span>
           ) : null}
         </div>
       </div>
 
-      {sessionsQuery.isPending ? (
-        <ul className="mx-auto w-full max-w-2xl space-y-4 px-5 sm:px-0" aria-busy="true">
+      {selectedSource === null ? (
+        <EmptyState
+          icon={Inbox}
+          title="Select a repository"
+          description="Choose a repository from the GitHub selector to view its sessions."
+        />
+      ) : sessionsQuery.isPending ? (
+        <ul className="mx-auto w-full max-w-4xl space-y-4" aria-busy="true">
           {[0, 1, 2, 3].map((index) => (
             <li
               key={index}
@@ -159,7 +153,7 @@ export function SessionsView({
         />
       ) : (
         <>
-          <ul className="mx-auto w-full max-w-2xl space-y-4 px-5 sm:px-0">
+          <ul className="mx-auto w-full max-w-4xl space-y-4">
             {visibleSessions.map((session) => (
               <SessionCard key={session.name} session={session} onOpen={onOpenSession} />
             ))}

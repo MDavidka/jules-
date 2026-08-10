@@ -39,6 +39,7 @@ function sessionStatus(session: NormalizedSession): SessionStatus {
 export function SessionCard({ session, onOpen }: SessionCardProps) {
   const status = sessionStatus(session);
   const StatusIcon = status.icon;
+  const title = session.title.replace(/^Fix:\s*Fix:\s*/i, "Fix: ");
 
   return (
     <li>
@@ -52,7 +53,7 @@ export function SessionCard({ session, onOpen }: SessionCardProps) {
       >
         <div className="flex w-full items-start justify-between gap-3">
           <h3 className="line-clamp-3 min-w-0 max-w-[38rem] text-sm font-semibold leading-5 text-foreground break-anywhere">
-            {session.title}
+            {title}
           </h3>
           {session.pullRequestUrl ? (
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.06] px-2 py-1 text-[11px] font-medium text-muted-foreground">
