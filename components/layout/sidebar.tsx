@@ -76,10 +76,14 @@ export function Sidebar({
         </ul>
       </nav>
 
-      {/* Projects: the real repositories connected to Jules. */}
+      {/*
+        The repositories connected to Jules. Deliberately NOT titled "Projects":
+        that word now names the tab tracking active work, and two different meanings
+        in one sidebar was confusing.
+      */}
       <div className="mt-6 flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between px-5 pb-1">
-          <h2 className="text-sm font-medium text-muted-foreground">Projects</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">Repositories</h2>
           <button
             type="button"
             onClick={() => handleNavigate("repositories")}

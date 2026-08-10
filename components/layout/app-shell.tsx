@@ -4,6 +4,7 @@ import { LoaderCircle, TriangleAlert } from "lucide-react";
 import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
+import { ChatView } from "@/components/chat/chat-view";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { AppHeader } from "@/components/layout/app-header";
 import { BrandMark } from "@/components/layout/brand-mark";
@@ -11,6 +12,7 @@ import { VIEW_TITLES, type ViewId } from "@/components/layout/nav-items";
 import { Sidebar } from "@/components/layout/sidebar";
 import { MemoryAttachSheet } from "@/components/memory/memory-attach-sheet";
 import { MemoryView } from "@/components/memory/memory-view";
+import { ProjectsView } from "@/components/projects/projects-view";
 import { RepoPickerSheet } from "@/components/repositories/repo-picker-sheet";
 import { RepositoriesView } from "@/components/repositories/repositories-view";
 import { SessionDetailView } from "@/components/sessions/session-detail-view";
@@ -20,11 +22,18 @@ import { SetupGate } from "@/components/setup/setup-gate";
 import { SkillsView } from "@/components/skills/skills-view";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
+import { useAgentChat } from "@/hooks/use-agent-chat";
 import { useJulesConfig } from "@/hooks/use-jules-config";
 import { useMemory } from "@/hooks/use-memory";
-import { useCreateSession, useSessions } from "@/hooks/use-sessions";
+import {
+  useNvidiaConfig,
+  useNvidiaModels,
+  useSaveSelectedModel,
+} from "@/hooks/use-nvidia-config";
+import { useSessions } from "@/hooks/use-sessions";
 import { useSource, useSources } from "@/hooks/use-sources";
 import { ApiError } from "@/lib/api-client";
+import { DEFAULT_MODEL_ID } from "@/lib/nvidia-models";
 import { errorMessage } from "@/lib/utils";
 
 export function AppShell() {
@@ -65,6 +74,7 @@ function ConfiguredApp() {
   const [navOpen, setNavOpen] = React.useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = React.useState(false);
   const [memorySheetOpen, setMemorySheetOpen] = React.useState(false);
+  const [composerDraft, setComposerDraft] = React.useState<string | null>(null);
 
   const sourcesQuery = useSources({ enabled: true });
   const sources = React.useMemo(() => sourcesQuery.data?.items ?? [], [sourcesQuery.data]);
@@ -88,6 +98,54 @@ function ConfiguredApp() {
     setBranch(null);
   }, [selectedSourceName]);
 
+  // The branch selector moved out of the composer to make room for the model
+  // picker, so the effective branch is the repo default until something overrides it.
+  const effectiveBranch = branch ?? selectedSource?.defaultBranch ?? null;
+
+  /* ------------------------------ NVIDIA agent ----------------------------- */
+
+  const nvidiaConfigQuery = useNvidiaConfig();
+  const modelsQuery = useNvidiaModels();
+  const saveSelectedModel = useSaveSelectedModel();
+
+  const models = React.useMemo(() => modelsQuery.data?.items ?? [], [modelsQuery.data]);
+  const [selectedModel, setSelectedModel] = React.useState<string>(DEFAULT_MODEL_ID);
+
+  // Adopt the persisted model choice once, without fighting a later manual change.
+  const hasAdoptedStoredModel = React.useRef(false);
+  React.useEffect(() => {
+    const stored = nvidiaConfigQuery.data?.defaultModel;
+    if (hasAdoptedStoredModel.current || !stored) return;
+
+    hasAdoptedStoredModel.current = true;
+    setSelectedModel(stored);
+  }, [nvidiaConfigQuery.data?.defaultModel]);
+
+  // Keep the selection valid if the live catalog omits it.
+  React.useEffect(() => {
+    if (models.length === 0) return;
+    if (models.some((model) => model.id === selectedModel)) return;
+
+    setSelectedModel(modelsQuery.data?.defaultModel ?? models[0]!.id);
+  }, [models, modelsQuery.data?.defaultModel, selectedModel]);
+
+  const handleModelChange = (modelId: string) => {
+    setSelectedModel(modelId);
+    // Persistence is a convenience; a failure here must not interrupt the chat.
+    saveSelectedModel.mutate(modelId);
+  };
+
+  const chat = useAgentChat({
+    model: selectedModel,
+    source: selectedSourceName,
+    branch: effectiveBranch,
+  });
+
+  // Only treat the key as missing once the status has actually loaded.
+  const needsNvidiaKey = nvidiaConfigQuery.data ? !nvidiaConfigQuery.data.configured : false;
+
+  /* --------------------------------- Memory -------------------------------- */
+
   const memoryQuery = useMemory();
   const pinnedNotes = React.useMemo(
     () =>
@@ -97,7 +155,7 @@ function ConfiguredApp() {
     [memoryQuery.data, selectedSourceName],
   );
 
-  const createSession = useCreateSession();
+  /* -------------------------------- Sessions ------------------------------- */
 
   // Keep the sessions list warm so the header/dashboard reflect live state.
   const sessionsQuery = useSessions({ enabled: true });
@@ -119,31 +177,17 @@ function ConfiguredApp() {
     setActiveView("session");
   };
 
-  const handleSubmitTask = async (prompt: string) => {
-    if (!selectedSource) throw new Error("Pick a repository first.");
+  const handleSendMessage = async (message: string) => {
+    if (needsNvidiaKey) {
+      toast({
+        title: "NVIDIA API key required",
+        description: "Add a key in Settings to chat with a model.",
+        variant: "info",
+      });
+      return;
+    }
 
-    // Append pinned memory so the agent gets the saved project context.
-    const memoryBlock =
-      pinnedNotes.length > 0
-        ? `\n\n---\nProject memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}`
-        : "";
-
-    const result = await createSession.mutateAsync({
-      prompt: `${prompt}${memoryBlock}`,
-      source: selectedSource.name,
-      ...(branch ?? selectedSource.defaultBranch
-        ? { branch: branch ?? selectedSource.defaultBranch ?? undefined }
-        : {}),
-    });
-
-    toast({
-      // Jules is asynchronous: this only confirms submission.
-      title: "Task submitted to Jules",
-      description: "Following live progress now.",
-      variant: "success",
-    });
-
-    handleOpenSession(result.session.name);
+    await chat.send(message);
   };
 
   const handleRefresh = () => {
@@ -151,8 +195,20 @@ function ConfiguredApp() {
     void sessionsQuery.refetch();
   };
 
-  const headerTitle =
-    activeView === "session" ? VIEW_TITLES.session : VIEW_TITLES[activeView];
+  // Seed prompts adapt to whether a repository is in context yet.
+  const suggestions = React.useMemo(() => {
+    if (!selectedSource) {
+      return ["Which repositories can you see?", "What do you already remember about me?"];
+    }
+
+    return [
+      `What does ${selectedSource.fullName} do? Save the important parts to memory.`,
+      "Find an open issue worth fixing and brief Jules on it.",
+      "Where is this project most likely to break?",
+    ];
+  }, [selectedSource]);
+
+  const headerTitle = activeView === "session" ? VIEW_TITLES.session : VIEW_TITLES[activeView];
 
   const sidebar = (
     <Sidebar
@@ -196,10 +252,46 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView
-              activeSessionCount={activeSessions.length}
-              onOpenDashboard={() => handleNavigate("dashboard")}
-            />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <ChatView
+                messages={chat.messages}
+                traces={chat.traces}
+                timestamps={chat.timestamps}
+                pendingAction={chat.pendingAction}
+                isSending={chat.isSending}
+                isResolving={chat.isResolving}
+                error={chat.error}
+                truncated={chat.truncated}
+                onConfirm={() => void chat.resolve(true)}
+                onSkip={() => void chat.resolve(false)}
+                onDismissError={chat.dismissError}
+                suggestions={suggestions}
+                onUseSuggestion={setComposerDraft}
+                needsNvidiaKey={needsNvidiaKey}
+                onOpenSettings={() => handleNavigate("settings")}
+                repoLabel={selectedSource?.fullName ?? null}
+              />
+
+              {/* Live task count, so chatting never hides work already in progress. */}
+              {activeSessions.length > 0 && chat.messages.length === 0 ? (
+                <div className="flex justify-center px-6 pb-40 lg:pb-4">
+                  <button
+                    type="button"
+                    onClick={() => handleNavigate("dashboard")}
+                    className="inline-flex touch-target items-center gap-2 rounded-full border border-border/80 bg-card px-4 text-sm text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <LoaderCircle
+                      className="h-3.5 w-3.5 animate-spin text-sky-400"
+                      aria-hidden="true"
+                    />
+                    {activeSessions.length} task{activeSessions.length === 1 ? "" : "s"} running
+                  </button>
+                </div>
+              ) : (
+                // Spacer so the fixed mobile composer never covers the last turn.
+                <div className="h-40 shrink-0 lg:hidden" aria-hidden="true" />
+              )}
+            </div>
           ) : (
             <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
               {activeView === "dashboard" ? (
@@ -208,6 +300,14 @@ function ConfiguredApp() {
                   selectedSource={selectedSource}
                   onOpenSession={handleOpenSession}
                   onNewTask={() => handleNavigate("new-task")}
+                />
+              ) : activeView === "projects" ? (
+                <ProjectsView
+                  onOpenChat={(sourceName) => {
+                    handleSelectSource(sourceName);
+                    handleNavigate("new-task");
+                  }}
+                  onOpenSession={handleOpenSession}
                 />
               ) : activeView === "repositories" ? (
                 <RepositoriesView
@@ -240,13 +340,19 @@ function ConfiguredApp() {
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
                   source={selectedSource}
-                  branch={branch}
-                  onBranchChange={setBranch}
-                  onSubmit={handleSubmitTask}
-                  isSubmitting={createSession.isPending}
+                  branch={effectiveBranch}
+                  models={models}
+                  isLoadingModels={modelsQuery.isPending}
+                  selectedModel={selectedModel}
+                  onModelChange={handleModelChange}
+                  onSubmit={handleSendMessage}
+                  isSubmitting={chat.isSending}
                   attachedMemoryCount={pinnedNotes.length}
                   onOpenMemory={() => setMemorySheetOpen(true)}
-                  disabled={sources.length === 0 && !sourcesQuery.isPending}
+                  // Block input while a confirmation card is waiting on the user.
+                  disabled={needsNvidiaKey || Boolean(chat.pendingAction)}
+                  draft={composerDraft}
+                  onDraftConsumed={() => setComposerDraft(null)}
                 />
               </div>
             </div>
@@ -268,35 +374,6 @@ function ConfiguredApp() {
         onOpenChange={setMemorySheetOpen}
         onManageAll={() => handleNavigate("memory")}
       />
-    </div>
-  );
-}
-
-/** The near-empty hero state from the reference design. */
-function NewTaskView({
-  activeSessionCount,
-  onOpenDashboard,
-}: {
-  activeSessionCount: number;
-  onOpenDashboard: () => void;
-}) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 pb-48 pt-10 text-center lg:pb-10">
-      <BrandMark className="h-12 w-12" iconClassName="h-7 w-7" />
-      <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">
-        Describe a task and Jules will plan it, write the code, and report back here.
-      </p>
-
-      {activeSessionCount > 0 ? (
-        <button
-          type="button"
-          onClick={onOpenDashboard}
-          className="mt-5 inline-flex touch-target items-center gap-2 rounded-full border border-border/80 bg-card px-4 text-sm text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-sky-400" aria-hidden="true" />
-          {activeSessionCount} task{activeSessionCount === 1 ? "" : "s"} running
-        </button>
-      ) : null}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 
 import { ConfigurationError, DecryptionError } from "@/lib/crypto.server";
 import { JulesApiError, NotConfiguredError } from "@/lib/jules-client.server";
+import { NvidiaApiError, NvidiaNotConfiguredError } from "@/lib/nvidia-client.server";
 import { formatZodError } from "@/lib/validators";
 import type { ApiErrorBody } from "@/types/jules";
 
@@ -42,9 +43,15 @@ export function handleRouteError(error: unknown): NextResponse<ApiErrorBody> {
     return jsonError(error.message, 500, { code: "DECRYPTION_ERROR" });
   }
 
-  // 4. No key configured yet -> the client shows the setup gate.
+  // 4. No Jules key configured yet -> the client shows the setup gate.
   if (error instanceof NotConfiguredError) {
     return jsonError(error.message, 428, { code: "NOT_CONFIGURED" });
+  }
+
+  // 4b. No NVIDIA key yet. Distinct code: only the chat surface is blocked, so the
+  // client prompts for that one key instead of re-running the whole setup gate.
+  if (error instanceof NvidiaNotConfiguredError) {
+    return jsonError(error.message, 428, { code: "NVIDIA_NOT_CONFIGURED" });
   }
 
   // 5. Sanitized upstream Jules failures.
@@ -55,6 +62,12 @@ export function handleRouteError(error: unknown): NextResponse<ApiErrorBody> {
     return jsonError(error.message, status, {
       code: error.upstreamStatus ?? "JULES_API_ERROR",
     });
+  }
+
+  // 5b. Sanitized upstream NVIDIA failures.
+  if (error instanceof NvidiaApiError) {
+    const status = error.status >= 500 ? 502 : error.status;
+    return jsonError(error.message, status, { code: "NVIDIA_API_ERROR" });
   }
 
   // 6. MongoDB connectivity problems get an actionable, non-leaking message.
@@ -91,7 +104,9 @@ function sanitizeForLog(error: unknown): string {
   const redacted = error.message
     .replace(/mongodb(\+srv)?:\/\/[^\s"']+/gi, "mongodb://<redacted>")
     .replace(/(X-Goog-Api-Key\s*[:=]\s*)\S+/gi, "$1<redacted>")
-    .replace(/AIza[0-9A-Za-z\-_]{10,}/g, "<redacted-key>");
+    .replace(/(Authorization\s*[:=]\s*)\S+/gi, "$1<redacted>")
+    .replace(/AIza[0-9A-Za-z\-_]{10,}/g, "<redacted-key>")
+    .replace(/nvapi-[A-Za-z0-9_-]{6,}/g, "<redacted-key>");
 
   return `${error.name}: ${redacted}`;
 }
