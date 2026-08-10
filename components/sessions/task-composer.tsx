@@ -1,7 +1,8 @@
 "use client";
 
 import { ArrowUp, BrainCircuit, LoaderCircle, Mic, Sparkles } from "lucide-react";
-import { NVIDIA_MODELS, type NvidiaModelId } from "@/lib/nvidia-models";
+import { providerLogo } from "@/lib/nvidia-models";
+import type { NvidiaModel } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -22,8 +23,9 @@ interface TaskComposerProps {
   source: NormalizedSource | null;
   branch: string | null;
   onBranchChange: (branch: string) => void;
-  model: NvidiaModelId;
-  onModelChange: (model: NvidiaModelId) => void;
+  model: string;
+  models: readonly NvidiaModel[];
+  onModelChange: (model: string) => void;
   onSubmit: (prompt: string) => Promise<void>;
   isSubmitting: boolean;
   /** Number of pinned memory notes that will be attached. */
@@ -41,6 +43,7 @@ export function TaskComposer({
   branch,
   onBranchChange,
   model,
+  models,
   onModelChange,
   onSubmit,
   isSubmitting,
@@ -176,13 +179,13 @@ export function TaskComposer({
             ) : null}
           </button>
 
-          <Select value={model} onValueChange={(value) => onModelChange(value as NvidiaModelId)} disabled={disabled}>
+          <Select value={model} onValueChange={onModelChange} disabled={disabled}>
             <SelectTrigger aria-label="NVIDIA model" className="h-10 min-h-10 w-auto max-w-[12rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
               <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="w-[min(18rem,90vw)]">
-              {NVIDIA_MODELS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}<span className="ml-2 text-xs text-muted-foreground">free</span></SelectItem>)}
+              {models.map((item) => <SelectItem key={item.id} value={item.id}><span className="flex items-center gap-2"><img src={providerLogo(item.provider)} alt="" className="size-4" onError={(event) => { event.currentTarget.style.display = "none"; }} />{item.label}<span className="text-xs text-muted-foreground">{item.provider}</span></span></SelectItem>)}
             </SelectContent>
           </Select>
 

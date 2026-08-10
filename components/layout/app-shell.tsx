@@ -1,7 +1,8 @@
 "use client";
 
 import { LoaderCircle, TriangleAlert } from "lucide-react";
-import { NVIDIA_MODELS, type NvidiaModelId } from "@/lib/nvidia-models";
+import { NVIDIA_MODELS } from "@/lib/nvidia-models";
+import { useNvidiaModels } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
@@ -61,7 +62,9 @@ function ConfiguredApp() {
   const [activeView, setActiveView] = React.useState<ViewId>("new-task");
   const [selectedSourceName, setSelectedSourceName] = React.useState<string | null>(null);
   const [branch, setBranch] = React.useState<string | null>(null);
-  const [model, setModel] = React.useState<NvidiaModelId>(NVIDIA_MODELS[0].id);
+  const [model, setModel] = React.useState<string>(NVIDIA_MODELS[0].id);
+  const nvidiaModelsQuery = useNvidiaModels();
+  const nvidiaModels = nvidiaModelsQuery.models.length ? nvidiaModelsQuery.models : NVIDIA_MODELS;
   const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [assistantPending, setAssistantPending] = React.useState(false);
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
@@ -124,12 +127,13 @@ function ConfiguredApp() {
   const handleSubmitTask = async (prompt: string) => {
     const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
     setAssistantPending(true);
-    const response = await fetch("/api/nvidia/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${prompt}${memoryBlock}`, model, history: assistantMessages }) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message ?? "NVIDIA assistant request failed.");
-    setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: data.message }]);
+    setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
+    const response = await fetch("/api/nvidia/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${prompt}${memoryBlock}`, model, source: selectedSourceName, history: assistantMessages }) });
+    if (!response.ok || !response.body) { const data = await response.json().catch(() => null); setAssistantPending(false); throw new Error(data?.message ?? "NVIDIA assistant request failed."); }
+    const reader = response.body.getReader(); const decoder = new TextDecoder();
+    while (true) { const result = await reader.read(); if (result.done) break; const token = decoder.decode(result.value, { stream: true }); setAssistantMessages((current) => { const next = [...current]; const last = next[next.length - 1]; if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token }; return next; }); }
     setAssistantPending(false);
-    toast({ title: "NVIDIA assistant replied", description: "Your project context is being gathered.", variant: "success" });
+    toast({ title: "NVIDIA assistant replied", description: "Repository context and next steps are ready.", variant: "success" });
   };
 
   const handleRefresh = () => {
@@ -224,6 +228,7 @@ function ConfiguredApp() {
                   branch={branch}
                   onBranchChange={setBranch}
                   model={model}
+                  models={nvidiaModels}
                   onModelChange={setModel}
                   onSubmit={handleSubmitTask}
                   isSubmitting={assistantPending}
@@ -261,7 +266,7 @@ function NewTaskView({ messages }: { messages: Array<{ role: "user" | "assistant
     <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-48 pt-6 sm:px-6 lg:pb-10">
       {messages.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the NVIDIA assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
-      ) : <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] whitespace-pre-wrap px-5 py-3 text-base leading-relaxed text-foreground"}>{message.content}</div>)}</div>}
+      ) : <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] whitespace-pre-wrap px-5 py-3 text-base leading-relaxed text-foreground"}>{message.content}{message.role === "assistant" && index === messages.length - 1 ? <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-primary align-middle" aria-label="Assistant is typing" /> : null}</div>)}</div>}
     </div>
   );
 }
