@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, BrainCircuit, LoaderCircle, Mic, Sparkles } from "lucide-react";
+import { ArrowUp, BrainCircuit, LoaderCircle, Mic } from "lucide-react";
 import { providerLogo } from "@/lib/nvidia-models";
 import type { NvidiaModel } from "@/hooks/use-nvidia-models";
 import * as React from "react";
@@ -74,6 +74,10 @@ export function TaskComposer({
 
   const branches = source?.branches ?? [];
   const effectiveBranch = branch ?? source?.defaultBranch ?? null;
+  const selectedModel = models.find((item) => item.id === model);
+  const hideImage = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    event.currentTarget.style.display = "none";
+  };
   const trimmedLength = prompt.trim().length;
   const isOverLimit = trimmedLength > PROMPT_MAX_LENGTH;
   const canSubmit =
@@ -180,12 +184,37 @@ export function TaskComposer({
           </button>
 
           <Select value={model} onValueChange={onModelChange} disabled={disabled}>
-            <SelectTrigger aria-label="NVIDIA model" className="h-10 min-h-10 w-auto max-w-[12rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
-              <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            <SelectTrigger aria-label="Model" className="h-10 min-h-10 w-auto max-w-[13rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
+              {selectedModel ? (
+                <img
+                  src={providerLogo(selectedModel.icon)}
+                  alt=""
+                  className="size-4 shrink-0 rounded-sm"
+                  onError={hideImage}
+                />
+              ) : null}
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="w-[min(18rem,90vw)]">
-              {models.map((item) => <SelectItem key={item.id} value={item.id}><span className="flex items-center gap-2"><img src={providerLogo(item.provider)} alt="" className="size-4" onError={(event) => { event.currentTarget.style.display = "none"; }} />{item.label}<span className="text-xs text-muted-foreground">{item.provider}</span></span></SelectItem>)}
+              {models.map((item) => (
+                <SelectItem
+                  key={item.id}
+                  value={item.id}
+                  extra={
+                    <span className="flex items-center gap-1.5">
+                      <img
+                        src={providerLogo(item.icon)}
+                        alt=""
+                        className="size-4 rounded-sm"
+                        onError={hideImage}
+                      />
+                      <span className="text-xs text-muted-foreground">{item.provider}</span>
+                    </span>
+                  }
+                >
+                  {item.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
 

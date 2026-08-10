@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { loadNvidiaApiKey } from "@/lib/nvidia.server";
-import { NVIDIA_MODELS } from "@/lib/nvidia-models";
+import { NVIDIA_MODELS, type NvidiaModelDef } from "@/lib/nvidia-models";
 
 export const dynamic = "force-dynamic";
+
+const CURATED_BY_ID = new Map<string, NvidiaModelDef>(NVIDIA_MODELS.map((model) => [model.id, model]));
 
 export async function GET() {
   const apiKey = await loadNvidiaApiKey();
@@ -17,12 +19,13 @@ export async function GET() {
     if (!response.ok) return NextResponse.json({ models: NVIDIA_MODELS, live: false });
     const data = await response.json();
     const models = Array.isArray(data.data)
-      ? data.data.map((item: { id?: unknown; name?: unknown; owned_by?: unknown }) => {
-          const id = typeof item.id === "string" ? item.id : "";
-          const provider = id.split("/")[0] || "nvidia";
-          return { id, label: typeof item.name === "string" ? item.name : id, provider, icon: provider };
-        }).filter((item: { id: string }) => item.id)
-      : NVIDIA_MODELS;
+      ? data.data
+          .filter((item: { id?: unknown }) => typeof item.id === "string" && CURATED_BY_ID.has(item.id))
+          .map((item: { id: string }) => {
+            const curated = CURATED_BY_ID.get(item.id)!;
+            return { id: item.id, label: curated.label, provider: curated.provider, icon: curated.icon };
+          })
+      : [];
     return NextResponse.json({ models: models.length ? models : NVIDIA_MODELS, live: true }, { headers: { "Cache-Control": "private, max-age=300" } });
   } catch {
     return NextResponse.json({ models: NVIDIA_MODELS, live: false });

@@ -1,7 +1,24 @@
+export interface NvidiaModelDef {
+  id: string;
+  label: string;
+  provider: string;
+  icon: string;
+}
+
+/**
+ * Curated model catalogue. Only these models are offered in the model
+ * changer and accepted by the chat completions endpoint.
+ */
 export const NVIDIA_MODELS = [
-  { id: "meta/llama-3.1-8b-instruct", label: "Llama 3.1 8B", provider: "Meta", icon: "meta" },
-  { id: "mistralai/mistral-7b-instruct-v0.3", label: "Mistral 7B", provider: "Mistral AI", icon: "mistral" },
-  { id: "google/gemma-2-9b-it", label: "Gemma 2 9B", provider: "Google", icon: "google" },
-] as const;
+  { id: "deepseek-ai/deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "DeepSeek", icon: "deepseek" },
+  { id: "nvidia/nemotron-3-ultra-550b", label: "Nemotron 3 Ultra 550B", provider: "NVIDIA", icon: "nvidia" },
+  { id: "zai-org/glm-5-2", label: "GLM-5.2", provider: "Z.ai", icon: "zai" },
+  { id: "deepseek-ai/deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "DeepSeek", icon: "deepseek" },
+  { id: "nvidia/nemotron-3-super-120b", label: "Nemotron 3 Super 120B", provider: "NVIDIA", icon: "nvidia" },
+] as const satisfies readonly NvidiaModelDef[];
+
 export type NvidiaModelId = (typeof NVIDIA_MODELS)[number]["id"];
-export const providerLogo = (provider: string) => `https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/${provider.toLowerCase().replaceAll(" ", "-")}/default.svg`;
+
+/** Provider brand mark, keyed by the model's `icon` slug. */
+export const providerLogo = (icon: string) =>
+  `https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/${icon.toLowerCase().replaceAll(" ", "-")}/default.svg`;

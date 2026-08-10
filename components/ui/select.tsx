@@ -41,7 +41,7 @@ const SelectContent = React.forwardRef<
       ref={ref}
       position={position}
       className={cn(
-        "relative z-[70] max-h-72 min-w-[10rem] overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl shadow-black/50",
+        "relative z-[70] min-w-[10rem] overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl shadow-black/50",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
         position === "popper" &&
           "data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1 w-[var(--radix-select-trigger-width)]",
@@ -49,7 +49,7 @@ const SelectContent = React.forwardRef<
       )}
       {...props}
     >
-      <SelectPrimitive.Viewport className="scrollbar-thin max-h-72 overflow-y-auto p-1">
+      <SelectPrimitive.Viewport className="scrollbar-thin max-h-72 w-full overflow-y-auto overscroll-contain p-1">
         {children}
       </SelectPrimitive.Viewport>
     </SelectPrimitive.Content>
@@ -71,8 +71,8 @@ SelectLabel.displayName = SelectPrimitive.Label.displayName;
 
 const SelectItem = React.forwardRef<
   React.ComponentRef<typeof SelectPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item> & { extra?: React.ReactNode }
+>(({ className, children, extra, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
@@ -88,6 +88,7 @@ const SelectItem = React.forwardRef<
       </SelectPrimitive.ItemIndicator>
     </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    {extra ? <span className="ml-auto flex shrink-0 items-center gap-1.5">{extra}</span> : null}
   </SelectPrimitive.Item>
 ));
 SelectItem.displayName = SelectPrimitive.Item.displayName;
