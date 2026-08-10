@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, TriangleAlert } from "lucide-react";
-import { NVIDIA_MODELS } from "@/lib/nvidia-models";
+import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 import { useNvidiaModels } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
@@ -62,9 +62,14 @@ function ConfiguredApp() {
   const [activeView, setActiveView] = React.useState<ViewId>("new-task");
   const [selectedSourceName, setSelectedSourceName] = React.useState<string | null>(null);
   const [branch, setBranch] = React.useState<string | null>(null);
-  const [model, setModel] = React.useState<string>(NVIDIA_MODELS[0].id);
+  const [model, setModel] = React.useState<string>(DEFAULT_NVIDIA_MODEL_ID);
   const nvidiaModelsQuery = useNvidiaModels();
-  const nvidiaModels = nvidiaModelsQuery.models.length ? nvidiaModelsQuery.models : NVIDIA_MODELS;
+  const nvidiaModels = React.useMemo(() => {
+    const liveModels = nvidiaModelsQuery.models.length ? nvidiaModelsQuery.models : NVIDIA_MODELS;
+    const selectedModel = NVIDIA_MODELS.find((item) => item.id === model);
+    const orderedModels = [NVIDIA_MODELS[0], ...liveModels, selectedModel].filter(Boolean);
+    return [...new Map(orderedModels.map((item) => [item!.id, item!])).values()];
+  }, [model, nvidiaModelsQuery.models]);
   const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [assistantPending, setAssistantPending] = React.useState(false);
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
@@ -127,37 +132,63 @@ function ConfiguredApp() {
     const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
     setAssistantPending(true);
     setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
-    const response = await fetch("/api/nvidia/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: `${prompt}${memoryBlock}`,
-        model,
-        source: selectedSource?.githubUrl ?? selectedSource?.fullName ?? selectedSourceName,
-        attachments,
-        history: assistantMessages,
-      }),
-    });
-    if (!response.ok || !response.body) {
-      const data = await response.json().catch(() => null);
-      setAssistantPending(false);
-      throw new Error(data?.error ?? data?.message ?? "NVIDIA assistant request failed.");
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      const token = decoder.decode(result.value, { stream: true });
+
+    try {
+      const response = await fetch("/api/nvidia/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: `${prompt}${memoryBlock}`,
+          model: model || DEFAULT_NVIDIA_MODEL_ID,
+          source: selectedSource?.githubUrl ?? selectedSource?.fullName ?? selectedSourceName,
+          attachments,
+          history: assistantMessages,
+        }),
+      });
+      if (!response.ok || !response.body) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error ?? data?.message ?? "DeepSeek assistant request failed.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let receivedContent = false;
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        const token = decoder.decode(result.value, { stream: true });
+        if (!token) continue;
+        receivedContent = true;
+        setAssistantMessages((current) => {
+          const next = [...current];
+          const last = next[next.length - 1];
+          if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token };
+          return next;
+        });
+      }
+      const trailingToken = decoder.decode();
+      if (trailingToken) {
+        receivedContent = true;
+        setAssistantMessages((current) => {
+          const next = [...current];
+          const last = next[next.length - 1];
+          if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + trailingToken };
+          return next;
+        });
+      }
+      if (!receivedContent) throw new Error("DeepSeek returned an empty response. Try a smaller image or a different prompt.");
+      toast({ title: "DeepSeek replied", description: "Repository context and next steps are ready.", variant: "success" });
+    } catch (error) {
       setAssistantMessages((current) => {
         const next = [...current];
         const last = next[next.length - 1];
-        if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token };
+        if (last?.role === "assistant" && !last.content.trim()) next.pop();
         return next;
       });
+      throw error;
+    } finally {
+      setAssistantPending(false);
     }
-    setAssistantPending(false);
-    toast({ title: "NVIDIA assistant replied", description: "Repository context and next steps are ready.", variant: "success" });
   };
 
   const handleRefresh = () => {
@@ -281,7 +312,7 @@ function NewTaskView({ messages, isStreaming }: { messages: Array<{ role: "user"
   return (
     <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-48 pt-6 sm:px-6 lg:pb-10">
       {messages.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the NVIDIA assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
+        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the DeepSeek assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
       ) : (
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
           {messages.map((message, index) => (

@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronRight } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -44,7 +45,7 @@ function TableOfContents({ headings }: { headings: Heading[] }) {
   return (
     <details className="group rounded-2xl border border-border/70 bg-card/70 px-4 py-3" open={headings.length <= 4}>
       <summary className="cursor-pointer list-none text-sm font-bold text-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-        <span className="mr-2 text-primary transition-transform group-open:inline-block">▸</span>
+        <ChevronRight className="mr-2 inline-block h-4 w-4 text-primary transition-transform group-open:rotate-90" aria-hidden="true" />
         Table of contents
       </summary>
       <nav aria-label="Table of contents" className="mt-2 border-l border-border/80 pl-3">

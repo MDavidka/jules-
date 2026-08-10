@@ -1,7 +1,6 @@
 "use client";
 
-import { ArrowUp, FileText, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
-import { providerLogo } from "@/lib/nvidia-models";
+import { ArrowUp, Bot, FileText, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
 import type { NvidiaModel } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
@@ -79,13 +78,37 @@ export function TaskComposer({
 
   const branches = source?.branches ?? [];
   const effectiveBranch = branch ?? source?.defaultBranch ?? null;
-  const selectedModel = models.find((item) => item.id === model);
-  const hideImage = (event: React.SyntheticEvent<HTMLImageElement>) => {
-    event.currentTarget.style.display = "none";
-  };
   const trimmedLength = prompt.trim().length;
   const isOverLimit = trimmedLength > PROMPT_MAX_LENGTH;
   const canSubmit = !disabled && !isSubmitting && trimmedLength >= PROMPT_MIN_LENGTH && !isOverLimit;
+
+  const readImageAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const image = new Image();
+        image.onload = () => {
+          const maxDimension = 1600;
+          const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          const context = canvas.getContext("2d");
+          if (!context) {
+            reject(new Error(`Could not process ${file.name}.`));
+            return;
+          }
+          context.fillStyle = "#ffffff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        image.onerror = () => reject(new Error(`Could not decode ${file.name}.`));
+        image.src = String(reader.result);
+      };
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+      reader.readAsDataURL(file);
+    });
 
   const readAsDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -104,12 +127,17 @@ export function TaskComposer({
         continue;
       }
       try {
+        const isImage = file.type.startsWith("image/");
         const isText = file.type.startsWith("text/") || /\.(md|mdx|json|csv|ts|tsx|js|jsx|py|go|rs|java|yml|yaml|toml|xml|html|css)$/i.test(file.name);
         next.push({
           name: file.name,
           type: file.type || "application/octet-stream",
           size: file.size,
-          ...(isText ? { content: (await file.text()).slice(0, 200_000) } : { dataUrl: await readAsDataUrl(file) }),
+          ...(isImage
+            ? { dataUrl: await readImageAsDataUrl(file) }
+            : isText
+              ? { content: (await file.text()).slice(0, 200_000) }
+              : { dataUrl: await readAsDataUrl(file) }),
         });
       } catch (error) {
         toast({ title: "Could not attach file", description: errorMessage(error), variant: "error" });
@@ -234,15 +262,8 @@ export function TaskComposer({
 
           <Select value={model} onValueChange={onModelChange} disabled={disabled}>
             <SelectTrigger aria-label="Model" className="h-10 min-h-10 w-auto max-w-[13rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
-              {selectedModel ? (
-                <img
-                  src={providerLogo(selectedModel.icon)}
-                  alt=""
-                  className="size-4 shrink-0 rounded-sm"
-                  onError={hideImage}
-                />
-              ) : null}
-              <SelectValue />
+              <Bot className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <SelectValue placeholder="DeepSeek V4 Pro" />
             </SelectTrigger>
             <SelectContent className="w-[min(18rem,90vw)]">
               {models.map((item) => (
@@ -251,12 +272,7 @@ export function TaskComposer({
                   value={item.id}
                   extra={
                     <span className="flex items-center gap-1.5">
-                      <img
-                        src={providerLogo(item.icon)}
-                        alt=""
-                        className="size-4 rounded-sm"
-                        onError={hideImage}
-                      />
+                      <Bot className="size-4 text-primary" aria-hidden="true" />
                       <span className="text-xs text-muted-foreground">{item.provider}</span>
                     </span>
                   }
