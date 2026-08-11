@@ -7,18 +7,17 @@ import {
   GitBranch,
   GitPullRequest,
   LoaderCircle,
-  Send,
   Workflow,
 } from "lucide-react";
 import * as React from "react";
 
 import { ActivityItem } from "@/components/sessions/activity-item";
+import { TaskComposer } from "@/components/sessions/task-composer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
 import {
   POLL_INTERVALS,
@@ -27,6 +26,7 @@ import {
   useSendMessage,
   useSession,
 } from "@/hooks/use-sessions";
+import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 import {
   cn,
   errorMessage,
@@ -43,7 +43,6 @@ interface SessionDetailViewProps {
 
 export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetailViewProps) {
   const { toast } = useToast();
-  const [reply, setReply] = React.useState("");
 
   const sessionQuery = useSession(sessionName, { enabled });
   const session = sessionQuery.data ?? null;
@@ -71,16 +70,16 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
     }
   };
 
-  const handleSend = async () => {
-    const trimmed = reply.trim();
+  const handleSend = async (message: string) => {
+    const trimmed = message.trim();
     if (!trimmed) return;
 
     try {
       await sendMessage.mutateAsync(trimmed);
-      setReply("");
       toast({ title: "Message sent", variant: "success" });
     } catch (error) {
       toast({ title: "Could not send message", description: errorMessage(error), variant: "error" });
+      throw error;
     }
   };
 
@@ -88,7 +87,7 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
     <div className="space-y-4">
       <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        All tasks
+        All sessions
       </Button>
 
       {/* Header */}
@@ -100,7 +99,7 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
         </div>
       ) : sessionQuery.isError ? (
         <ErrorState
-          title="Could not load this task"
+          title="Could not load this session"
           message={errorMessage(sessionQuery.error)}
           onRetry={() => void sessionQuery.refetch()}
           isRetrying={sessionQuery.isFetching}
@@ -233,40 +232,22 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
         </p>
       </section>
 
-      {/* Reply composer */}
-      <section aria-label="Send a message to Jules" className="space-y-2">
-        <label htmlFor="session-reply" className="text-sm font-medium text-foreground">
-          Send a message
-        </label>
-        <Textarea
-          id="session-reply"
-          value={reply}
-          onChange={(event) => setReply(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              void handleSend();
-            }
-          }}
-          rows={3}
-          placeholder="Give Jules more context, or answer its question…"
-          disabled={sendMessage.isPending}
-        />
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">Cmd/Ctrl + Enter to send</p>
-          <Button
-            size="sm"
-            onClick={() => void handleSend()}
-            disabled={sendMessage.isPending || reply.trim().length === 0}
-          >
-            {sendMessage.isPending ? (
-              <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Send className="h-4 w-4" aria-hidden="true" />
-            )}
-            {sendMessage.isPending ? "Sending…" : "Send"}
-          </Button>
-        </div>
+      {/* Home-style session composer. The model selector remains visible but locked,
+          while the message input continues to answer Jules in this session. */}
+      <section aria-label="Send a message to Jules" className="pt-2">
+        {session ? (
+          <TaskComposer
+            source={null}
+            branch={session.branch}
+            onBranchChange={() => undefined}
+            model={DEFAULT_NVIDIA_MODEL_ID}
+            models={NVIDIA_MODELS}
+            onModelChange={() => undefined}
+            onSubmit={async (message) => handleSend(message)}
+            isSubmitting={sendMessage.isPending}
+            modelDisabled
+          />
+        ) : null}
       </section>
     </div>
   );

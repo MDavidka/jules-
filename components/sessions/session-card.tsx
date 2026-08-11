@@ -36,10 +36,16 @@ function sessionStatus(session: NormalizedSession): SessionStatus {
   return { label: sessionStateLabel(session.state), icon: MoreHorizontal, className: "bg-white/[0.08] text-zinc-300" };
 }
 
+function displaySessionTitle(rawTitle: string) {
+  const title = rawTitle.trim();
+  const withoutPrefix = title.replace(/^(?:fix:\s*)+/i, "").replace(/^fix\s+/i, "").trim();
+  return /^fix\b/i.test(title) ? `Fix: ${withoutPrefix}` : title;
+}
+
 export function SessionCard({ session, onOpen }: SessionCardProps) {
   const status = sessionStatus(session);
   const StatusIcon = status.icon;
-  const title = session.title.replace(/^Fix:\s*Fix:\s*/i, "Fix: ");
+  const title = displaySessionTitle(session.title);
 
   return (
     <li>

@@ -40,6 +40,7 @@ interface TaskComposerProps {
   onSubmit: (prompt: string, attachments: AgentAttachment[]) => Promise<void>;
   isSubmitting: boolean;
   disabled?: boolean;
+  modelDisabled?: boolean;
 }
 
 /**
@@ -56,6 +57,7 @@ export function TaskComposer({
   onSubmit,
   isSubmitting,
   disabled = false,
+  modelDisabled = false,
 }: TaskComposerProps) {
   const [prompt, setPrompt] = React.useState("");
   const [attachments, setAttachments] = React.useState<AgentAttachment[]>([]);
@@ -310,7 +312,7 @@ export function TaskComposer({
             <span className="sr-only">Attach files or images</span>
           </button>
 
-          <Select value={model} onValueChange={onModelChange} disabled={disabled}>
+          <Select value={model} onValueChange={onModelChange} disabled={disabled || modelDisabled}>
             <SelectTrigger aria-label="Model" className="h-10 min-h-10 w-auto max-w-[13rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
               {selectedModel ? <ModelIcon model={selectedModel} /> : null}
               <SelectValue placeholder="Select model" />

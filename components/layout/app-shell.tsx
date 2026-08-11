@@ -359,7 +359,7 @@ function ConfiguredApp() {
           ) : (
             <div className={cn(
               "mx-auto w-full flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10",
-              activeView === "dashboard" ? "max-w-5xl" : "max-w-3xl",
+              activeView === "dashboard" || activeView === "session" ? "max-w-5xl" : "max-w-3xl",
             )}>
               {activeView === "dashboard" ? (
                 <SessionsView

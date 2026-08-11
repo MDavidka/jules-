@@ -74,9 +74,15 @@ export function ActivityItem({ activity }: { activity: NormalizedActivity }) {
                   <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold text-muted-foreground">
                     {(step.index ?? index) + 1}
                   </span>
-                  <span className="min-w-0">
-                    <span className="block font-medium text-foreground break-anywhere">
-                      {step.title ?? `Step ${index + 1}`}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-foreground break-anywhere">
+                        {step.title ?? `Step ${index + 1}`}
+                      </span>
+                      <Badge variant="outline" className="gap-1 border-primary/25 bg-primary/10 px-1.5 py-0 text-[10px] text-primary">
+                        <Bot className="h-3 w-3" aria-hidden="true" />
+                        Agentic
+                      </Badge>
                     </span>
                     {step.description ? (
                       <span className="mt-0.5 block leading-relaxed text-muted-foreground break-anywhere">
