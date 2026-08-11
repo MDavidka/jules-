@@ -2,6 +2,8 @@ import { handleRouteError, jsonError } from "@/lib/api-response.server";
 import {
   connectToDatabase,
   ConversationMessage,
+  getAppProfile,
+  profileHasKey,
   serializeConversationMessage,
 } from "@/lib/mongodb.server";
 import { NextResponse } from "next/server";
@@ -9,11 +11,29 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 /**
+ * Auth guard: requires a valid Jules API key to be configured on the app profile.
+ * This ensures only authenticated app instances can access conversation history.
+ */
+async function requireAuth(): Promise<Response | null> {
+  const profile = await getAppProfile();
+  if (!profileHasKey(profile)) {
+    return NextResponse.json(
+      { error: "Unauthorized. A valid Jules API key must be configured." },
+      { status: 401 },
+    );
+  }
+  return null;
+}
+
+/**
  * GET /api/conversations?source=<source>&limit=<n>
  * List recent conversation messages for a source, limit 50.
  */
 export async function GET(request: Request) {
   try {
+    const authError = await requireAuth();
+    if (authError) return authError;
+
     const url = new URL(request.url);
     const source = url.searchParams.get("source") || null;
     const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 50);
@@ -43,6 +63,9 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
+    const authError = await requireAuth();
+    if (authError) return authError;
+
     const body = (await request.json()) as {
       role?: unknown;
       content?: unknown;

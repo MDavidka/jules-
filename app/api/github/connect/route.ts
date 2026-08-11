@@ -24,6 +24,13 @@ export function GET() {
   // Generate a cryptographic random state to prevent CSRF attacks.
   const state = randomBytes(32).toString("hex");
 
+  // Scope rationale: `repo` is intentionally used (not just `public_repo` or
+  // `read:user`) because the MCP agent needs full repository access to perform
+  // its fix workflow: reading private repository code, creating branches,
+  // pushing commits, and opening pull requests. This is a deliberate
+  // least-privilege-within-use-case choice - we request only the scopes the
+  // agent actively uses, but `repo` is the minimum GitHub scope that covers
+  // read + write operations on both public and private repositories.
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,

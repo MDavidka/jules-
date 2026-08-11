@@ -46,18 +46,23 @@ function refillBucket(): void {
 }
 
 async function waitForToken(): Promise<void> {
-  refillBucket();
-
-  if (bucket.tokens > 0) {
-    bucket.tokens -= 1;
-    return;
-  }
-
-  // Wait until the next refill cycle gives us at least one token
   const waitTime = Math.ceil(REFILL_INTERVAL_MS / MAX_TOKENS);
-  await new Promise((resolve) => setTimeout(resolve, waitTime));
-  refillBucket();
-  bucket.tokens = Math.max(0, bucket.tokens - 1);
+
+  // Loop until a token is actually available. Under concurrent requests,
+  // another caller may consume the token produced by refill before we can
+  // grab it, so we must re-check after each sleep cycle.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    refillBucket();
+
+    if (bucket.tokens > 0) {
+      bucket.tokens -= 1;
+      return;
+    }
+
+    // No token available - wait for the next refill opportunity
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
+  }
 }
 
 function sleep(ms: number): Promise<void> {
