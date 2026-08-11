@@ -5,7 +5,6 @@ import {
   Check,
   CircleCheck,
   ListChecks,
-  Terminal,
   TriangleAlert,
   User,
   Workflow,
@@ -16,7 +15,7 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { MarkdownContent } from "@/components/ui/markdown-content";
-import type { ActivityKind, Artifact, NormalizedActivity } from "@/types/jules";
+import type { ActivityKind, NormalizedActivity } from "@/types/jules";
 
 const KIND_META: Record<ActivityKind, { icon: LucideIcon; tint: string }> = {
   agentMessaged: { icon: Bot, tint: "text-primary" },
@@ -94,86 +93,7 @@ export function ActivityItem({ activity }: { activity: NormalizedActivity }) {
               ))}
           </ol>
         ) : null}
-
-        {activity.artifacts.length > 0 ? (
-          <div className="mt-2 space-y-2">
-            {activity.artifacts.map((artifact, index) => (
-              <ArtifactView key={index} artifact={artifact} />
-            ))}
-          </div>
-        ) : null}
       </div>
     </li>
   );
-}
-
-function ArtifactView({ artifact }: { artifact: Artifact }) {
-  if (artifact.changeSet?.gitPatch) {
-    const { unidiffPatch, suggestedCommitMessage, baseCommitId } = artifact.changeSet.gitPatch;
-
-    return (
-      <details className="group rounded-xl border border-border/70 bg-black/40">
-        <summary className="flex cursor-pointer touch-target items-center gap-2 px-3 text-sm text-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-          <Badge variant="outline" className="border-border/80">
-            diff
-          </Badge>
-          <span className="min-w-0 flex-1 truncate">
-            {suggestedCommitMessage ?? "Code changes"}
-          </span>
-        </summary>
-        <div className="border-t border-border/70 px-3 py-2">
-          {baseCommitId ? (
-            <p className="pb-1.5 font-mono text-[11px] text-muted-foreground">
-              base {baseCommitId.slice(0, 10)}
-            </p>
-          ) : null}
-          <pre className="scrollbar-thin max-h-72 overflow-auto whitespace-pre font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {unidiffPatch ?? "(empty patch)"}
-          </pre>
-        </div>
-      </details>
-    );
-  }
-
-  if (artifact.bashOutput) {
-    const { command, output, exitCode } = artifact.bashOutput;
-    const failed = typeof exitCode === "number" && exitCode !== 0;
-
-    return (
-      <details className="rounded-xl border border-border/70 bg-black/40">
-        <summary className="flex cursor-pointer touch-target items-center gap-2 px-3 text-sm marker:content-none [&::-webkit-details-marker]:hidden">
-          <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground">
-            {command ?? "command"}
-          </code>
-          <Badge
-            variant="outline"
-            className={cn(
-              "shrink-0 border-border/80 font-mono text-[10px]",
-              failed && "border-red-500/30 text-red-300",
-            )}
-          >
-            exit {exitCode ?? "?"}
-          </Badge>
-        </summary>
-        {output ? (
-          <pre className="scrollbar-thin max-h-60 overflow-auto whitespace-pre-wrap border-t border-border/70 px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {output}
-          </pre>
-        ) : null}
-      </details>
-    );
-  }
-
-  if (artifact.media?.data && artifact.media.mimeType?.startsWith("image/")) {
-    return (
-      <img
-        src={`data:${artifact.media.mimeType};base64,${artifact.media.data}`}
-        alt="Screenshot produced by Jules"
-        className="max-h-72 w-full rounded-xl border border-border/70 object-contain"
-      />
-    );
-  }
-
-  return null;
 }

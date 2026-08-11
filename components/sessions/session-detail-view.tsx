@@ -2,7 +2,6 @@
 
 import {
   Check,
-  ChevronDown,
   CircleCheck,
   CircleX,
   LoaderCircle,
@@ -19,7 +18,6 @@ import { ExpandableText } from "@/components/ui/expandable-text";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import {
-  POLL_INTERVALS,
   useActivities,
   useApprovePlan,
   useSendMessage,
@@ -31,7 +29,6 @@ import {
   errorMessage,
   formatAbsoluteTime,
   formatRelativeTime,
-  sessionStateClasses,
   sessionStateLabel,
 } from "@/lib/utils";
 import type { NormalizedActivity, NormalizedSession } from "@/types/jules";
@@ -42,9 +39,8 @@ interface SessionDetailViewProps {
 }
 
 /**
- * Session view. It mirrors the home conversation layout: a compact header, the
- * submitted prompt, the single most recent agentic step, and every earlier step
- * behind a disclosure. Long text is always clamped but openable.
+ * Session view. Shows a compact header, the submitted prompt, all agentic steps
+ * inline as a timeline (no collapsible disclosures), and a transparent composer.
  */
 export function SessionDetailView({ sessionName, enabled }: SessionDetailViewProps) {
   const { toast } = useToast();
@@ -65,9 +61,6 @@ export function SessionDetailView({ sessionName, enabled }: SessionDetailViewPro
       (a, b) => new Date(b.createTime ?? 0).getTime() - new Date(a.createTime ?? 0).getTime(),
     );
   }, [activitiesQuery.data]);
-
-  const latestActivity = orderedActivities[0] ?? null;
-  const earlierActivities = orderedActivities.slice(1);
 
   const handleApprove = async () => {
     try {
@@ -125,9 +118,9 @@ export function SessionDetailView({ sessionName, enabled }: SessionDetailViewPro
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={session.pullRequestTitle ? `View pull request: ${session.pullRequestTitle}` : "View pull request"}
-                className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full bg-emerald-500 px-4 text-sm font-semibold text-black shadow-[0_0_18px_rgba(34,197,94,0.2)] transition-colors hover:bg-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
-                <Zap className="h-4 w-4" aria-hidden="true" />
+                <Zap className="h-3.5 w-3.5" aria-hidden="true" />
                 PR
                 <span className="sr-only">View pull request</span>
               </a>
@@ -157,7 +150,7 @@ export function SessionDetailView({ sessionName, enabled }: SessionDetailViewPro
             />
           ) : (
             <LatestStep
-              activity={latestActivity}
+              activity={orderedActivities[0] ?? null}
               session={session}
               isSessionActive={isSessionActive}
             />
@@ -175,26 +168,18 @@ export function SessionDetailView({ sessionName, enabled }: SessionDetailViewPro
                 ) : (
                   <Check className="h-4 w-4" aria-hidden="true" />
                 )}
-                {approvePlan.isPending ? "Accepting…" : "Accept task"}
+                {approvePlan.isPending ? "Accepting..." : "Accept task"}
               </Button>
             </div>
           ) : null}
 
-          {earlierActivities.length > 0 ? (
-            <StepDisclosure
-              label={`Earlier steps (${earlierActivities.length})`}
-              hint={
-                isSessionActive
-                  ? `Live · every ${POLL_INTERVALS.ACTIVE_DETAIL_MS / 1000}s`
-                  : `Every ${POLL_INTERVALS.IDLE_MS / 1000}s`
-              }
-            >
-              <ul className="pl-0.5 pt-3">
-                {earlierActivities.map((activity) => (
-                  <ActivityItem key={activity.name || activity.id} activity={activity} />
-                ))}
-              </ul>
-            </StepDisclosure>
+          {/* All earlier activities shown inline without disclosure */}
+          {orderedActivities.length > 1 ? (
+            <ul className="pl-0.5 pt-3">
+              {orderedActivities.slice(1).map((activity) => (
+                <ActivityItem key={activity.name || activity.id} activity={activity} />
+              ))}
+            </ul>
           ) : null}
 
           <p aria-live="polite" className="sr-only">
@@ -203,7 +188,7 @@ export function SessionDetailView({ sessionName, enabled }: SessionDetailViewPro
 
           <section aria-label="Send a message to Jules" className="pt-1">
             <div
-              className="fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.08] bg-background/92 px-3 pb-3 pt-3 shadow-[0_-18px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl pb-safe sm:px-6"
+              className="fixed inset-x-0 bottom-0 z-30 px-3 pb-3 pt-3 pb-safe sm:px-6"
             >
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
@@ -227,8 +212,8 @@ export function SessionDetailView({ sessionName, enabled }: SessionDetailViewPro
 }
 
 /**
- * The always-visible current step. Body text is clamped and openable, and any
- * plan or artifacts stay behind a disclosure so the step stays scannable.
+ * The always-visible current step. Body text is clamped and openable. Activity
+ * details are shown inline (no disclosure wrapper).
  */
 function LatestStep({
   activity,
@@ -240,7 +225,6 @@ function LatestStep({
   isSessionActive: boolean;
 }) {
   const { label, tone } = stepHeadline(activity, session);
-  const hasDetails = Boolean(activity?.plan?.steps?.length || activity?.artifacts.length);
 
   return (
     <section aria-label="Current step" className="space-y-2 py-1">
@@ -270,38 +254,13 @@ function LatestStep({
         </p>
       )}
 
-      {activity && hasDetails ? (
-        <StepDisclosure label="Step details">
-          <ul className="pl-0.5 pt-3">
-            <ActivityItem activity={activity} />
-          </ul>
-        </StepDisclosure>
+      {/* Show activity plan inline without disclosure */}
+      {activity?.plan?.steps?.length ? (
+        <ul className="pl-0.5 pt-3">
+          <ActivityItem activity={activity} />
+        </ul>
       ) : null}
     </section>
-  );
-}
-
-function StepDisclosure({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <details className="group rounded-2xl border border-border/60 bg-card/40 px-3.5 py-2.5">
-      <summary className="flex cursor-pointer touch-target list-none items-center gap-2 text-xs font-medium text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-        <ChevronDown
-          className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
-          aria-hidden="true"
-        />
-        {label}
-        {hint ? <span className="ml-auto text-[11px] text-muted-foreground/80">{hint}</span> : null}
-      </summary>
-      {children}
-    </details>
   );
 }
 

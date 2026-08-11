@@ -32,6 +32,7 @@ export interface AgentAttachment {
 
 interface TaskComposerProps {
   source: NormalizedSource | null;
+  sources?: NormalizedSource[];
   branch: string | null;
   onBranchChange: (branch: string) => void;
   model: string;
@@ -49,6 +50,7 @@ interface TaskComposerProps {
  */
 export function TaskComposer({
   source,
+  sources,
   branch,
   onBranchChange,
   model,
@@ -63,8 +65,10 @@ export function TaskComposer({
   const [attachments, setAttachments] = React.useState<AgentAttachment[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | null>(null);
+  const [showGithubDropdown, setShowGithubDropdown] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   const dictation = useSpeechDictation({
@@ -82,6 +86,48 @@ export function TaskComposer({
     element.style.height = "auto";
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
   }, [prompt]);
+
+  // Detect /github trigger and manage dropdown visibility.
+  React.useEffect(() => {
+    if (!sources?.length) {
+      setShowGithubDropdown(false);
+      return;
+    }
+    // Show dropdown when /github appears at the end of current input (possibly with trailing space).
+    const match = /\/github\s*$/.test(prompt);
+    setShowGithubDropdown(match);
+  }, [prompt, sources]);
+
+  // Close dropdown on escape or click outside.
+  React.useEffect(() => {
+    if (!showGithubDropdown) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowGithubDropdown(false);
+      }
+    };
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowGithubDropdown(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showGithubDropdown]);
+
+  const handleSelectRepo = (repoFullName: string) => {
+    // Replace /github trigger with @owner/repo reference.
+    setPrompt((current) => current.replace(/\/github\s*$/, `@${repoFullName} `));
+    setShowGithubDropdown(false);
+    textareaRef.current?.focus();
+  };
 
   const branches = source?.branches ?? [];
   const effectiveBranch = branch ?? source?.defaultBranch ?? null;
@@ -276,20 +322,42 @@ export function TaskComposer({
         <label htmlFor="task-prompt" className="sr-only">
           Describe the task for Jules
         </label>
-        <textarea
-          id="task-prompt"
-          ref={textareaRef}
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-          disabled={disabled || isSubmitting}
-          maxLength={PROMPT_MAX_LENGTH + 100}
-          aria-invalid={Boolean(validationError)}
-          aria-describedby="task-prompt-help"
-          placeholder="Describe what you want to build, debug, or understand."
-          className="max-h-[160px] w-full resize-none bg-transparent px-2 pb-2 pt-1 text-lg leading-relaxed text-foreground outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 disabled:cursor-not-allowed sm:max-h-[200px] sm:px-2.5 sm:pb-3 sm:pt-1.5 sm:text-2xl"
-        />
+        <div className="relative">
+          <textarea
+            id="task-prompt"
+            ref={textareaRef}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={2}
+            disabled={disabled || isSubmitting}
+            maxLength={PROMPT_MAX_LENGTH + 100}
+            aria-invalid={Boolean(validationError)}
+            aria-describedby="task-prompt-help"
+            placeholder="Describe what you want to build, debug, or understand."
+            className="max-h-[160px] w-full resize-none bg-transparent px-2 pb-2 pt-1 text-lg leading-relaxed text-foreground outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 disabled:cursor-not-allowed sm:max-h-[200px] sm:px-2.5 sm:pb-3 sm:pt-1.5 sm:text-2xl"
+          />
+
+          {/* /github repo chooser dropdown */}
+          {showGithubDropdown && sources && sources.length > 0 ? (
+            <div
+              ref={dropdownRef}
+              className="absolute bottom-full left-0 z-50 mb-2 w-72 rounded-lg border border-border bg-popover p-1 shadow-md"
+            >
+              <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Select a repository</p>
+              {sources.map((s) => (
+                <button
+                  key={s.name}
+                  type="button"
+                  onClick={() => handleSelectRepo(s.fullName)}
+                  className="flex w-full cursor-pointer items-center rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
+                >
+                  {s.fullName}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
 
         <input
           ref={fileInputRef}

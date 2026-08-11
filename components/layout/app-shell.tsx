@@ -398,6 +398,7 @@ function ConfiguredApp() {
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
                   source={selectedSource}
+                  sources={sources}
                   branch={branch}
                   onBranchChange={setBranch}
                   model={model}

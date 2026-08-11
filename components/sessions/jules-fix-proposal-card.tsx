@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, LoaderCircle, Wrench, X } from "lucide-react";
+import { LoaderCircle, X } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,8 @@ interface JulesFixProposalCardProps {
 }
 
 /**
- * Explicit authorization boundary for Jules fixes. The assistant may propose
- * this card, but only the user's Confirm click calls the session API.
+ * Compact inline card for Jules fix proposals. Minimal design with just a short
+ * title, fix description, and two small outline buttons.
  */
 export function JulesFixProposalCard({ proposal, onSessionCreated }: JulesFixProposalCardProps) {
   const { toast } = useToast();
@@ -58,26 +58,32 @@ export function JulesFixProposalCard({ proposal, onSessionCreated }: JulesFixPro
   };
 
   return (
-    <section className="mt-3 space-y-3 rounded-2xl border border-primary/30 bg-primary/[0.07] p-4" aria-label="Jules fix proposal">
-      <div className="flex items-start gap-3">
-        <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
-        <div className="min-w-0 space-y-1">
-          <p className="text-sm font-semibold text-foreground">Start a Jules fix?</p>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            I can send this problem to Jules for an authorized repository fix. It will create a task, then wait for plan approval before making changes.
-          </p>
-          <p className="break-anywhere text-xs text-muted-foreground/80">
-            {proposal.title}{proposal.branch ? ` · branch ${proposal.branch}` : ""}
-          </p>
-        </div>
+    <section className="mt-3 rounded-xl border border-border/60 bg-card/50 p-3" aria-label="Jules fix proposal">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium text-foreground">Start Jules fix?</p>
+        <p className="text-xs text-muted-foreground break-anywhere">
+          {proposal.title}{proposal.branch ? ` · ${proposal.branch}` : ""}
+        </p>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={() => void handleConfirm()} disabled={createSession.isPending} size="sm">
-          {createSession.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="h-4 w-4" aria-hidden="true" />}
-          {createSession.isPending ? "Starting…" : "Confirm and start Jules"}
+      <div className="mt-3 flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleConfirm()}
+          disabled={createSession.isPending}
+          className="h-7 rounded-md px-3 text-xs"
+        >
+          {createSession.isPending ? <LoaderCircle className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" /> : null}
+          {createSession.isPending ? "Starting..." : "Confirm"}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setDismissed(true)} disabled={createSession.isPending}>
-          <X className="h-4 w-4" aria-hidden="true" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setDismissed(true)}
+          disabled={createSession.isPending}
+          className="h-7 rounded-md px-3 text-xs"
+        >
+          <X className="mr-1 h-3 w-3" aria-hidden="true" />
           Cancel
         </Button>
       </div>

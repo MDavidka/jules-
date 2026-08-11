@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Inbox, SquarePen } from "lucide-react";
+import { Inbox, SquarePen } from "lucide-react";
 import * as React from "react";
 
 import { SessionCard } from "@/components/sessions/session-card";
@@ -68,14 +68,6 @@ export function SessionsView({
               )}
             </p>
           </div>
-          <Button
-            size="sm"
-            onClick={onNewTask}
-            className="shrink-0 rounded-full bg-foreground px-4 text-background shadow-sm hover:bg-foreground/90"
-          >
-            Start for free
-            <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -100,11 +92,6 @@ export function SessionsView({
               </button>
             ))}
           </div>
-          {selectedSource ? (
-            <span className="truncate rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-medium text-primary">
-              {selectedSource.fullName}
-            </span>
-          ) : null}
         </div>
       </div>
 
