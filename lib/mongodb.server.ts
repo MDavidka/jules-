@@ -76,6 +76,9 @@ export interface AppProfileDoc {
   nvidiaApiKeyEncrypted?: string | null;
   nvidiaApiKeyIv?: string | null;
   nvidiaApiKeyAuthTag?: string | null;
+  githubAccessTokenEncrypted?: string | null;
+  githubAccessTokenIv?: string | null;
+  githubAccessTokenAuthTag?: string | null;
   configuredAt?: Date | null;
   lastValidatedAt?: Date | null;
   /** Persisted default automation mode applied to newly created sessions. */
@@ -95,6 +98,9 @@ const AppProfileSchema = new Schema<AppProfileDoc>(
     nvidiaApiKeyEncrypted: { type: String, default: null },
     nvidiaApiKeyIv: { type: String, default: null },
     nvidiaApiKeyAuthTag: { type: String, default: null },
+    githubAccessTokenEncrypted: { type: String, default: null },
+    githubAccessTokenIv: { type: String, default: null },
+    githubAccessTokenAuthTag: { type: String, default: null },
     configuredAt: { type: Date, default: null },
     lastValidatedAt: { type: Date, default: null },
     defaultAutomationMode: { type: String, default: "AUTOMATION_MODE_UNSPECIFIED" },

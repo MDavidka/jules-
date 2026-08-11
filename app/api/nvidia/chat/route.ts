@@ -4,6 +4,7 @@ import { runDeepResearch } from "@/lib/agent-research.server";
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
 import { extractPublicRepositoryLinks, inspectPublicRepository } from "@/lib/nvidia-tools.server";
 import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
+import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import { errorMessage } from "@/lib/utils";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 
@@ -155,7 +156,7 @@ export async function POST(request: Request) {
             .filter(Boolean)
             .join("\n\n");
 
-          const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
+          const response = await rateLimitedFetch(NVIDIA_CHAT_COMPLETIONS_URL, {
             method: "POST",
             headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -171,6 +172,9 @@ export async function POST(request: Request) {
             }),
           });
           if (!response.ok || !response.body) {
+            if (response.status === 429) {
+              sendStatus("waiting");
+            }
             const data = (await response.json().catch(() => null)) as { message?: unknown } | null;
             throw new Error(
               typeof data?.message === "string" ? data.message : `The model request failed (${response.status}).`,

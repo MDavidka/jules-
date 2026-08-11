@@ -6,6 +6,7 @@ import {
   searchWeb,
 } from "@/lib/nvidia-tools.server";
 import { NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
+import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import type { AgentActivity } from "@/lib/agent-activity";
 
 /** Hard ceiling on tool-calling rounds, so a confused model cannot loop forever. */
@@ -223,7 +224,7 @@ async function requestCompletion({
   const timeout = setTimeout(() => controller.abort(), STEP_TIMEOUT_MS);
 
   try {
-    const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
+    const response = await rateLimitedFetch(NVIDIA_CHAT_COMPLETIONS_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       signal: controller.signal,
