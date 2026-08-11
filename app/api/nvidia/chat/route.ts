@@ -133,7 +133,9 @@ export async function POST(request: Request) {
 
           sendStatus("working");
 
-          // Fetch older conversation messages for continuity context
+          // Fetch older conversation messages for continuity context.
+          // Hybrid heuristic: always include the last 3 messages (most recent context),
+          // then fill remaining budget with shorter historical messages for efficiency.
           let conversationContext = "";
           try {
             await connectToDatabase();
@@ -142,14 +144,21 @@ export async function POST(request: Request) {
             )
               .sort({ createdAt: -1 })
               .limit(10)
-              .lean<Array<{ role: string; content: string; tokenEstimate: number }>>()
+              .lean<Array<{ role: string; content: string; tokenEstimate: number; createdAt: Date }>>()
               .exec();
 
             if (recentMessages.length > 0) {
-              // Prioritize shorter messages for context efficiency
-              const prioritized = [...recentMessages]
+              // Always keep the last 3 messages regardless of length for recency
+              const alwaysInclude = recentMessages.slice(0, 3);
+              // From the remaining older messages, prefer shorter ones for budget efficiency
+              const older = recentMessages.slice(3);
+              const shorterOlder = [...older]
                 .sort((a, b) => a.tokenEstimate - b.tokenEstimate)
-                .slice(0, 8);
+                .slice(0, 5);
+
+              const prioritized = [...alwaysInclude, ...shorterOlder];
+              // Sort final set chronologically (oldest first) for natural reading order
+              prioritized.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
               conversationContext =
                 "Previous conversation (for continuity):\n" +

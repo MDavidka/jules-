@@ -3,6 +3,14 @@ import "server-only";
 /**
  * Simple in-memory token bucket rate limiter for the NVIDIA API.
  * Limits to 20 requests per 60 seconds with automatic retry on 429 responses.
+ *
+ * LIMITATION: This bucket lives in module-level memory, meaning each serverless
+ * function instance (or edge worker) gets its own independent counter. Under
+ * horizontal scaling the effective limit becomes 20 x instance_count, making
+ * this a best-effort throttle rather than a globally enforced ceiling. For a
+ * single-instance deployment (e.g. a long-running Node server or a single
+ * Vercel serverless region) this is sufficient. For multi-instance deployments,
+ * consider persisting remaining tokens in Redis or MongoDB.
  */
 
 const MAX_TOKENS = 20;

@@ -1,3 +1,5 @@
+import { randomBytes } from "crypto";
+
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -5,6 +7,8 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/github/connect
  * Redirects the user to GitHub OAuth authorize page to connect their account.
+ * Generates a cryptographic `state` parameter stored in an HttpOnly cookie to
+ * prevent CSRF-based token injection attacks.
  */
 export function GET() {
   const clientId = process.env.GITHUB_APP_CLIENT_ID;
@@ -17,11 +21,26 @@ export function GET() {
     );
   }
 
+  // Generate a cryptographic random state to prevent CSRF attacks.
+  const state = randomBytes(32).toString("hex");
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: "repo",
+    scope: "read:user repo",
+    state,
   });
 
-  return NextResponse.redirect(`https://github.com/login/oauth/authorize?${params.toString()}`);
+  const response = NextResponse.redirect(`https://github.com/login/oauth/authorize?${params.toString()}`);
+
+  // Store state in an HttpOnly secure cookie so the callback can validate it.
+  response.cookies.set("github_oauth_state", state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/api/github/callback",
+    maxAge: 600, // 10 minutes - generous window for the OAuth round-trip
+  });
+
+  return response;
 }

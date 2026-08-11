@@ -89,6 +89,8 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
 
   const handleTouchMove = React.useCallback((e: React.TouchEvent) => {
     if (e.touches.length === 2 && initialDistanceRef.current !== null) {
+      // Prevent the browser's native pinch-zoom from firing simultaneously
+      e.preventDefault();
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const distance = Math.hypot(dx, dy);
