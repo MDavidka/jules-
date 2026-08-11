@@ -18,6 +18,8 @@ export const MEMORY_BLOCK_INSTRUCTIONS = [
   '"kind": "stack", "data": {"framework": "next", "startScript": "pnpm dev"}, "connections": []}.',
   "Use `data` for machine-readable values and keep titles under 60 characters.",
   "Omit the block entirely when there is nothing new worth storing. Never mention the block to the user.",
+  "Prefer concise, high-signal notes over verbose explanations. Each note should capture one key fact, decision, or pattern in the shortest useful form.",
+  "When the user's project context is already stored, do not duplicate it. Only add genuinely new information.",
 ].join(" ");
 
 interface ParsedCard {

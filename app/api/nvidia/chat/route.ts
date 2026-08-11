@@ -2,6 +2,7 @@ import type { AgentActivity } from "@/lib/agent-activity";
 import { createMemoryBlockFilter, MEMORY_BLOCK_INSTRUCTIONS, saveMemoryCards } from "@/lib/agent-memory.server";
 import { runDeepResearch } from "@/lib/agent-research.server";
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
+import { connectToDatabase, ConversationMessage } from "@/lib/mongodb.server";
 import { extractPublicRepositoryLinks, inspectPublicRepository } from "@/lib/nvidia-tools.server";
 import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import { rateLimitedFetch } from "@/lib/rate-limiter.server";
@@ -16,6 +17,10 @@ const SYSTEM_PROMPT = [
   "Answer in concise markdown, using the repository context, research findings, attached files, and image analysis provided with the request.",
   "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
   "Never start or stop a Jules session without first proposing an explicit confirmation step.",
+  "When a repository is selected, always reference specific file paths and code patterns from the research findings.",
+  "Use saved memory notes as authoritative context about the project. If memory mentions conventions or patterns, follow them in your suggestions.",
+  "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
+  "Reference previous conversation context provided to maintain continuity. Avoid repeating explanations already given in earlier messages.",
   MEMORY_BLOCK_INSTRUCTIONS,
 ].join(" ");
 
@@ -90,23 +95,6 @@ export async function POST(request: Request) {
         try {
           sendStatus("thinking");
 
-          if (shouldOfferJulesFix(prompt, source)) {
-            send({
-              type: "jules_fix_proposal",
-              proposal: {
-                prompt: buildJulesFixPrompt({
-                  userRequest: prompt,
-                  source,
-                  branch,
-                  memoryContext,
-                }),
-                source,
-                branch,
-                title: buildFixTitle(prompt, source),
-              },
-            });
-          }
-
           const fileContext = attachments
             .filter((attachment) => attachment.content)
             .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
@@ -145,9 +133,38 @@ export async function POST(request: Request) {
 
           sendStatus("working");
 
+          // Fetch older conversation messages for continuity context
+          let conversationContext = "";
+          try {
+            await connectToDatabase();
+            const recentMessages = await ConversationMessage.find(
+              source ? { source } : { source: null },
+            )
+              .sort({ createdAt: -1 })
+              .limit(10)
+              .lean<Array<{ role: string; content: string; tokenEstimate: number }>>()
+              .exec();
+
+            if (recentMessages.length > 0) {
+              // Prioritize shorter messages for context efficiency
+              const prioritized = [...recentMessages]
+                .sort((a, b) => a.tokenEstimate - b.tokenEstimate)
+                .slice(0, 8);
+
+              conversationContext =
+                "Previous conversation (for continuity):\n" +
+                prioritized
+                  .map((m) => `[${m.role}]: ${m.content.slice(0, 500)}`)
+                  .join("\n");
+            }
+          } catch {
+            // DB failures must not block the response
+          }
+
           const userContent = [
             prompt,
             memoryContext ? `Known project memory:\n${memoryContext}` : "",
+            conversationContext,
             research,
             deepFindings,
             fileContext,
@@ -186,6 +203,7 @@ export async function POST(request: Request) {
           const memoryFilter = createMemoryBlockFilter();
           let buffer = "";
           let emittedToken = false;
+          let fullResponse = "";
 
           const processLine = (line: string) => {
             if (!line.startsWith("data:")) return;
@@ -202,6 +220,7 @@ export async function POST(request: Request) {
             if (typeof token !== "string" || token.length === 0) return;
 
             emittedToken = true;
+            fullResponse += token;
             const visible = memoryFilter.push(token);
             if (visible) send({ type: "token", value: visible });
           };
@@ -221,12 +240,54 @@ export async function POST(request: Request) {
           if (trailing) send({ type: "token", value: trailing });
           if (!emittedToken) throw new Error("The model returned an empty response.");
 
+          // Emit jules_fix_proposal AFTER the response is fully streamed
+          if (shouldOfferJulesFix(prompt, source)) {
+            send({
+              type: "jules_fix_proposal",
+              proposal: {
+                prompt: buildJulesFixPrompt({
+                  userRequest: prompt,
+                  source,
+                  branch,
+                  memoryContext,
+                }),
+                source,
+                branch,
+                title: buildFixTitle(prompt, source),
+              },
+            });
+          }
+
           // Persist anything the model wrote to the memory board.
           const memoryBlock = memoryFilter.memoryBlock();
           if (memoryBlock) {
             sendStatus("saving");
             const saved = await saveMemoryCards(memoryBlock, source || null);
             if (saved > 0) send({ type: "memory", saved });
+          }
+
+          // Save conversation messages for agentic memory
+          try {
+            await connectToDatabase();
+            const sourceValue = source || null;
+            await ConversationMessage.insertMany([
+              {
+                role: "user",
+                content: prompt.slice(0, 20000),
+                source: sourceValue,
+                summary: null,
+                tokenEstimate: Math.ceil(prompt.length / 4),
+              },
+              {
+                role: "assistant",
+                content: fullResponse.slice(0, 20000),
+                source: sourceValue,
+                summary: null,
+                tokenEstimate: Math.ceil(fullResponse.length / 4),
+              },
+            ]);
+          } catch {
+            // Failures saving conversation history must not break the response
           }
 
           sendStatus("done");

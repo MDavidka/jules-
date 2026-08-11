@@ -205,6 +205,68 @@ export function serializeMemoryNote(
 }
 
 /* -------------------------------------------------------------------------- */
+/*                         Conversation history model                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Stores every user prompt and assistant response for agentic memory.
+ * The agent retrieves older messages to maintain conversation continuity
+ * and prioritizes shorter, high-signal messages for context injection.
+ */
+export interface ConversationMessageDoc {
+  _id: mongoose.Types.ObjectId;
+  role: "user" | "assistant";
+  content: string;
+  source: string | null;
+  summary: string | null;
+  tokenEstimate: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const ConversationMessageSchema = new Schema<ConversationMessageDoc>(
+  {
+    role: { type: String, enum: ["user", "assistant"], required: true },
+    content: { type: String, required: true, maxlength: 20000 },
+    source: { type: String, default: null },
+    summary: { type: String, default: null, maxlength: 500 },
+    tokenEstimate: { type: Number, default: 0 },
+  },
+  { timestamps: true, versionKey: false },
+);
+
+ConversationMessageSchema.index({ source: 1, createdAt: -1 });
+
+export const ConversationMessage: Model<ConversationMessageDoc> =
+  (mongoose.models.ConversationMessage as Model<ConversationMessageDoc>) ??
+  mongoose.model<ConversationMessageDoc>("ConversationMessage", ConversationMessageSchema);
+
+/** Wire shape for a conversation message. */
+export interface SerializedConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  source: string | null;
+  summary: string | null;
+  tokenEstimate: number;
+  createdAt: string | null;
+}
+
+export function serializeConversationMessage(
+  msg: Pick<ConversationMessageDoc, "_id" | "role" | "content" | "source" | "summary" | "tokenEstimate" | "createdAt">,
+): SerializedConversationMessage {
+  return {
+    id: String(msg._id),
+    role: msg.role,
+    content: msg.content,
+    source: msg.source ?? null,
+    summary: msg.summary ?? null,
+    tokenEstimate: msg.tokenEstimate,
+    createdAt: msg.createdAt?.toISOString() ?? null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /*                                  Helpers                                   */
 /* -------------------------------------------------------------------------- */
 
