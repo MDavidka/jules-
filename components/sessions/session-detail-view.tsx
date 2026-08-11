@@ -1,13 +1,10 @@
 "use client";
 
 import {
-  ArrowLeft,
   Check,
   ChevronDown,
   CircleCheck,
   CircleX,
-  ExternalLink,
-  GitBranch,
   LoaderCircle,
   Zap,
 } from "lucide-react";
@@ -15,7 +12,6 @@ import * as React from "react";
 
 import { ActivityItem } from "@/components/sessions/activity-item";
 import { TaskComposer } from "@/components/sessions/task-composer";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DotMatrixLoader } from "@/components/ui/dot-matrix-loader";
 import { ErrorState } from "@/components/ui/error-state";
@@ -43,7 +39,6 @@ import type { NormalizedActivity, NormalizedSession } from "@/types/jules";
 interface SessionDetailViewProps {
   sessionName: string;
   enabled: boolean;
-  onBack: () => void;
 }
 
 /**
@@ -51,7 +46,7 @@ interface SessionDetailViewProps {
  * submitted prompt, the single most recent agentic step, and every earlier step
  * behind a disclosure. Long text is always clamped but openable.
  */
-export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetailViewProps) {
+export function SessionDetailView({ sessionName, enabled }: SessionDetailViewProps) {
   const { toast } = useToast();
 
   const sessionQuery = useSession(sessionName, { enabled });
@@ -97,12 +92,7 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
   };
 
   return (
-    <div className="space-y-5">
-      <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2 min-h-9 px-2 text-xs">
-        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        All sessions
-      </Button>
-
+    <div className="space-y-5 pb-44">
       {sessionQuery.isPending ? (
         <div className="space-y-3">
           <Skeleton className="h-5 w-2/3" />
@@ -134,8 +124,8 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
                 href={session.pullRequestUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                title={session.pullRequestTitle ?? "View pull request"}
-                className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full bg-emerald-500 px-4 text-sm font-semibold text-black shadow-sm transition-colors hover:bg-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                aria-label={session.pullRequestTitle ? `View pull request: ${session.pullRequestTitle}` : "View pull request"}
+                className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full bg-emerald-500 px-4 text-sm font-semibold text-black shadow-[0_0_18px_rgba(34,197,94,0.2)] transition-colors hover:bg-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <Zap className="h-4 w-4" aria-hidden="true" />
                 PR
@@ -143,8 +133,6 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
               </a>
             ) : null}
           </header>
-
-          <SessionMetaDisclosure session={session} />
 
           {session.prompt ? (
             <div className="flex justify-end">
@@ -214,61 +202,27 @@ export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetai
           </p>
 
           <section aria-label="Send a message to Jules" className="pt-1">
-            <TaskComposer
-              source={null}
-              branch={session.branch}
-              onBranchChange={() => undefined}
-              model={DEFAULT_NVIDIA_MODEL_ID}
-              models={NVIDIA_MODELS}
-              onModelChange={() => undefined}
-              onSubmit={async (message) => handleSend(message)}
-              isSubmitting={sendMessage.isPending}
-              modelDisabled
-            />
+            <div
+              className="fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.08] bg-background/92 px-3 pb-3 pt-3 shadow-[0_-18px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl pb-safe sm:px-6"
+            >
+              <div className="mx-auto w-full max-w-3xl">
+                <TaskComposer
+                  source={null}
+                  branch={session.branch}
+                  onBranchChange={() => undefined}
+                  model={DEFAULT_NVIDIA_MODEL_ID}
+                  models={NVIDIA_MODELS}
+                  onModelChange={() => undefined}
+                  onSubmit={async (message) => handleSend(message)}
+                  isSubmitting={sendMessage.isPending}
+                  modelDisabled
+                />
+              </div>
+            </div>
           </section>
         </>
       ) : null}
     </div>
-  );
-}
-
-/** Repository, branch, state, and the Jules link stay available but out of the way. */
-function SessionMetaDisclosure({ session }: { session: NormalizedSession }) {
-  return (
-    <details className="group rounded-2xl border border-border/60 bg-card/50 px-3.5 py-2.5">
-      <summary className="flex cursor-pointer touch-target list-none items-center gap-2 text-xs font-medium text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-        <ChevronDown
-          className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
-          aria-hidden="true"
-        />
-        Session details
-        <Badge className={cn("ml-auto gap-1.5 border", sessionStateClasses(session.state))}>
-          {sessionStateLabel(session.state)}
-        </Badge>
-      </summary>
-
-      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2.5">
-        {session.sourceFullName ? (
-          <Badge variant="outline" className="border-border/80">
-            {session.sourceFullName}
-          </Badge>
-        ) : null}
-        {session.branch ? (
-          <Badge variant="outline" className="gap-1 border-border/80">
-            <GitBranch className="h-3 w-3" aria-hidden="true" />
-            {session.branch}
-          </Badge>
-        ) : null}
-        {session.julesUrl ? (
-          <Button size="sm" variant="ghost" asChild className="ml-auto min-h-9 px-2 text-xs">
-            <a href={session.julesUrl} target="_blank" rel="noopener noreferrer">
-              Open in Jules
-              <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
-            </a>
-          </Button>
-        ) : null}
-      </div>
-    </details>
   );
 }
 

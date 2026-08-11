@@ -387,7 +387,6 @@ function ConfiguredApp() {
                 <SessionDetailView
                   sessionName={openSessionName}
                   enabled
-                  onBack={() => handleNavigate("dashboard")}
                 />
               ) : null}
             </div>
