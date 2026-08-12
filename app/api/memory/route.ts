@@ -7,7 +7,7 @@ import { createMemorySchema } from "@/lib/validators";
 export const dynamic = "force-dynamic";
 
 /**
- * Memory is a Jules+ feature stored in MongoDB, not a Jules API resource.
+ * Memory is a Jules DeepDive feature stored in MongoDB, not a Jules API resource.
  * Pinned notes can be attached to a new task prompt from the composer.
  */
 

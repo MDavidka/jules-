@@ -112,7 +112,7 @@ export const AppProfile: Model<AppProfileDoc> =
 /* -------------------------------------------------------------------------- */
 
 /**
- * Persistent "memory" notes. These are a Jules+ feature (not a Jules API
+ * Persistent "memory" notes. These are a Jules DeepDive feature (not a Jules API
  * resource): saved context snippets the user can opt into appending to a new
  * task prompt.
  */

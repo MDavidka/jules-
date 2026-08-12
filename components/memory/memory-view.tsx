@@ -26,7 +26,7 @@ interface MemoryViewProps {
 }
 
 /**
- * Memory is a Jules+ feature backed by MongoDB. Jules has no memory resource,
+ * Memory is a Jules DeepDive feature backed by MongoDB. Jules has no memory resource,
  * so these notes are stored locally and pinned notes are appended to the prompt
  * when you start a task.
  */

@@ -39,7 +39,7 @@ export function AutomationsView() {
       <div className="space-y-1">
         <h2 className="text-lg font-semibold tracking-tight text-foreground">Automations</h2>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Defaults applied to every new task you start from Jules+.
+          Defaults applied to every new task you start from Jules DeepDive.
         </p>
       </div>
 

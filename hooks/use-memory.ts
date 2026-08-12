@@ -14,7 +14,7 @@ export interface MemoryNote {
 }
 
 /**
- * Memory is a Jules+ feature persisted in MongoDB (Jules exposes no memory
+ * Memory is a Jules DeepDive feature persisted in MongoDB (Jules exposes no memory
  * resource). Pinned notes can be attached to a new task prompt.
  */
 export function useMemory() {
