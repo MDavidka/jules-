@@ -36,17 +36,16 @@ export function RepositoriesView({
   const sourcesQuery = useSources({ enabled });
   const sessionsQuery = useSessions({ enabled });
   const sources = React.useMemo(() => sourcesQuery.data?.items ?? [], [sourcesQuery.data]);
-  const activeSourceNames = React.useMemo(() => {
-    const names = new Set(
+  const interactedSourceNames = React.useMemo(() => {
+    return new Set(
       (sessionsQuery.data?.items ?? [])
-        .filter((session) => session.activity === "active" || session.activity === "waiting")
-        .map((session) => session.source),
+        .map((session) => session.source)
+        .filter((source): source is string => Boolean(source)),
     );
-    return names;
   }, [sessionsQuery.data]);
-  const activeSources = React.useMemo(
-    () => sources.filter((source) => activeSourceNames.has(source.name)),
-    [activeSourceNames, sources],
+  const interactedSources = React.useMemo(
+    () => sources.filter((source) => source.name === selectedSource || interactedSourceNames.has(source.name)),
+    [interactedSourceNames, selectedSource, sources],
   );
 
   return (
@@ -88,14 +87,14 @@ export function RepositoriesView({
           onRetry={() => void sourcesQuery.refetch()}
           isRetrying={sourcesQuery.isFetching}
         />
-      ) : activeSources.length === 0 ? (
+      ) : interactedSources.length === 0 ? (
         <EmptyState
           icon={Github}
-          title={sources.length === 0 ? "No repositories connected" : "No active projects"}
+          title={sources.length === 0 ? "No repositories connected" : "No project interactions"}
           description={
             sources.length === 0
               ? "Install the Jules GitHub App and grant it access to a repository, then refresh."
-              : "Projects appear here while they have an active or waiting session."
+              : "Projects appear here after you chat or interact with them."
           }
           action={
             sources.length === 0 ? (
@@ -111,7 +110,7 @@ export function RepositoriesView({
         />
       ) : (
         <ul className="space-y-2">
-          {activeSources.map((source) => (
+          {interactedSources.map((source) => (
             <RepositoryCard
               key={source.name}
               source={source}
@@ -169,7 +168,6 @@ function RepositoryCard({
             </Badge>
           </div>
         </div>
-        {isSelected ? <Badge variant="primary">Active</Badge> : null}
       </div>
 
       <div className="flex flex-wrap gap-2">

@@ -13,6 +13,7 @@ interface SidebarProps {
   activeView: ViewId;
   onNavigate: (view: ViewId) => void;
   sources: NormalizedSource[];
+  connectedSourceCount: number;
   isLoadingSources: boolean;
   selectedSource: string | null;
   onSelectSource: (sourceName: string) => void;
@@ -24,6 +25,7 @@ export function Sidebar({
   activeView,
   onNavigate,
   sources,
+  connectedSourceCount,
   isLoadingSources,
   selectedSource,
   onSelectSource,
@@ -100,9 +102,13 @@ export function Sidebar({
                 </li>
               ))}
             </ul>
-          ) : sources.length === 0 ? (
+          ) : connectedSourceCount === 0 ? (
             <p className="px-2 py-2 text-sm leading-relaxed text-muted-foreground/80">
               No repositories yet. Install the Jules GitHub App to connect one.
+            </p>
+          ) : sources.length === 0 ? (
+            <p className="px-2 py-2 text-sm leading-relaxed text-muted-foreground/80">
+              No project interactions yet.
             </p>
           ) : (
             <ul className="space-y-0.5">
@@ -154,7 +160,7 @@ export function Sidebar({
             </span>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <ShieldCheck className="h-3 w-3 shrink-0 text-emerald-400" aria-hidden="true" />
-              {sources.length} {sources.length === 1 ? "repo" : "repos"} connected
+              {connectedSourceCount} {connectedSourceCount === 1 ? "repo" : "repos"} connected
             </span>
           </span>
           <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />

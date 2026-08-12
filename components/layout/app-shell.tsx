@@ -21,7 +21,6 @@ import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { useToast } from "@/components/ui/toast";
 import { useJulesConfig } from "@/hooks/use-jules-config";
 import { useMemory } from "@/hooks/use-memory";
 import { useSessions } from "@/hooks/use-sessions";
@@ -56,11 +55,13 @@ export function AppShell() {
   return <ConfiguredApp />;
 }
 
+const LAST_SELECTED_SOURCE_KEY = "jules-plus:last-selected-source";
+
 function ConfiguredApp() {
-  const { toast } = useToast();
 
   const [activeView, setActiveView] = React.useState<ViewId>("new-task");
   const [selectedSourceName, setSelectedSourceName] = React.useState<string | null>(null);
+  const [hasLoadedSavedSource, setHasLoadedSavedSource] = React.useState(false);
   const [branch, setBranch] = React.useState<string | null>(null);
   const [model, setModel] = React.useState<string>(DEFAULT_NVIDIA_MODEL_ID);
   const nvidiaModelsQuery = useNvidiaModels();
@@ -83,12 +84,31 @@ function ConfiguredApp() {
   const sourcesQuery = useSources({ enabled: true });
   const sources = React.useMemo(() => sourcesQuery.data?.items ?? [], [sourcesQuery.data]);
 
-  // Default to the first available repository once sources load.
   React.useEffect(() => {
-    if (!selectedSourceName && sources.length > 0) {
+    try {
+      setSelectedSourceName(window.localStorage.getItem(LAST_SELECTED_SOURCE_KEY));
+    } catch {
+      setSelectedSourceName(null);
+    }
+    setHasLoadedSavedSource(true);
+  }, []);
+
+  // Restore the last repository, then fall back to the first connected source.
+  React.useEffect(() => {
+    if (!hasLoadedSavedSource || sources.length === 0) return;
+    if (!selectedSourceName || !sources.some((source) => source.name === selectedSourceName)) {
       setSelectedSourceName(sources[0]!.name);
     }
-  }, [sources, selectedSourceName]);
+  }, [hasLoadedSavedSource, sources, selectedSourceName]);
+
+  React.useEffect(() => {
+    if (!selectedSourceName) return;
+    try {
+      window.localStorage.setItem(LAST_SELECTED_SOURCE_KEY, selectedSourceName);
+    } catch {
+      // Storage can be unavailable in private browsing; selection still works in memory.
+    }
+  }, [selectedSourceName]);
 
   // Fetch full detail (branch list) for the selected source.
   const sourceDetailQuery = useSource(selectedSourceName);
@@ -113,8 +133,13 @@ function ConfiguredApp() {
 
   // Keep the sessions list warm so the header/dashboard reflect live state.
   const sessionsQuery = useSessions({ enabled: true });
-  const activeSessions = (sessionsQuery.data?.items ?? []).filter(
-    (session) => session.activity === "active" || session.activity === "waiting",
+  const interactedSourceNames = React.useMemo(
+    () => new Set((sessionsQuery.data?.items ?? []).map((session) => session.source).filter((source): source is string => Boolean(source))),
+    [sessionsQuery.data],
+  );
+  const visibleSources = React.useMemo(
+    () => sources.filter((source) => source.name === selectedSourceName || interactedSourceNames.has(source.name)),
+    [interactedSourceNames, selectedSourceName, sources],
   );
 
   React.useLayoutEffect(() => {
@@ -190,7 +215,6 @@ function ConfiguredApp() {
         });
       }
       if (!receivedContent) throw new Error("The assistant returned an empty response. Try a smaller image or a different prompt.");
-      toast({ title: "Assistant replied", description: "Repository context and next steps are ready.", variant: "success" });
     } catch (error) {
       setAssistantMessages((current) => {
         const next = [...current];
@@ -216,7 +240,8 @@ function ConfiguredApp() {
     <Sidebar
       activeView={activeView}
       onNavigate={handleNavigate}
-      sources={sources}
+      sources={visibleSources}
+      connectedSourceCount={sources.length}
       isLoadingSources={sourcesQuery.isPending}
       selectedSource={selectedSourceName}
       onSelectSource={(sourceName) => {
@@ -311,7 +336,7 @@ function ConfiguredApp() {
       <RepoPickerSheet
         open={repoPickerOpen}
         onOpenChange={setRepoPickerOpen}
-        sources={sources}
+        sources={visibleSources}
         isLoading={sourcesQuery.isPending}
         selectedSource={selectedSourceName}
         onSelect={handleSelectSource}

@@ -285,7 +285,7 @@ export function TaskComposer({
           maxLength={PROMPT_MAX_LENGTH + 100}
           aria-invalid={Boolean(validationError)}
           aria-describedby="task-prompt-help"
-          placeholder="Describe what you want to build, debug, or understand. Paste a public GitHub link for repository context."
+          placeholder="Describe what you want to build, debug, or understand."
           className="max-h-[160px] w-full resize-none bg-transparent px-2 pb-2 pt-1 text-lg leading-relaxed text-foreground outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 disabled:cursor-not-allowed sm:max-h-[200px] sm:px-2.5 sm:pb-3 sm:pt-1.5 sm:text-2xl"
         />
 
