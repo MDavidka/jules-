@@ -19,6 +19,8 @@ import { cn, errorMessage } from "@/lib/utils";
 import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from "@/lib/validators";
 import type { NormalizedSource } from "@/types/jules";
 
+export const LONG_PROMPT_FILE_THRESHOLD = 4_000;
+
 export interface AgentAttachment {
   id: string;
   name: string;
@@ -26,6 +28,8 @@ export interface AgentAttachment {
   size: number;
   content?: string;
   dataUrl?: string;
+  /** Marks the generated text file that contains the complete user request. */
+  isPromptAttachment?: boolean;
   status?: "processing" | "ready" | "error";
   error?: string;
 }
@@ -254,7 +258,26 @@ export function TaskComposer({
     }
 
     try {
-      await onSubmit(prompt.trim(), attachments.filter((attachment) => attachment.status !== "error"));
+      const trimmedPrompt = prompt.trim();
+      const promptAttachment: AgentAttachment | null = trimmedPrompt.length >= LONG_PROMPT_FILE_THRESHOLD
+        ? {
+            id: `prompt-${Date.now()}`,
+            name: "user-request.md",
+            type: "text/markdown",
+            size: new Blob([trimmedPrompt]).size,
+            content: trimmedPrompt,
+            isPromptAttachment: true,
+            status: "ready",
+          }
+        : null;
+      const submittedPrompt = promptAttachment
+        ? `Please read the attached file "${promptAttachment.name}" for my complete request, then answer or act on it.`
+        : trimmedPrompt;
+      const submittedAttachments = promptAttachment
+        ? [promptAttachment, ...attachments.filter((attachment) => attachment.status !== "error")]
+        : attachments.filter((attachment) => attachment.status !== "error");
+
+      await onSubmit(submittedPrompt, submittedAttachments);
       setPrompt("");
       setAttachments([]);
       setValidationError(null);

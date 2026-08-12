@@ -179,6 +179,8 @@ function ConfiguredApp() {
   };
 
   const handleSubmitTask = async (prompt: string, attachments: AgentAttachment[]) => {
+    const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
+    const displayPrompt = promptAttachment?.content?.trim() || prompt;
     const memoryContext = pinnedNotes
       .map((note) => {
         const title = note.title?.trim() ? `${note.title.trim()}: ` : "";
@@ -188,7 +190,7 @@ function ConfiguredApp() {
       .join("\n");
     setAssistantPending(true);
     setAssistantActivity("thinking");
-    setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
+    setAssistantMessages((current) => [...current, { role: "user", content: displayPrompt }, { role: "assistant", content: "" }]);
 
     try {
       const response = await fetch("/api/nvidia/chat", {

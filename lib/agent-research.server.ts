@@ -1,10 +1,8 @@
 import {
-  inspectPublicRepository,
-  listRepositoryTree,
-  readRepositoryFile,
   readWebPage,
   searchWeb,
 } from "@/lib/nvidia-tools.server";
+import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
 import { NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import type { AgentActivity } from "@/lib/agent-activity";
@@ -262,11 +260,9 @@ async function executeTool(
     case "read_web_page":
       return readWebPage(asString(input.url));
     case "list_repository_files":
-      return listRepositoryTree(repository);
     case "read_repository_file":
-      return readRepositoryFile(repository, asString(input.path));
     case "inspect_repository":
-      return inspectPublicRepository(repository);
+      return callRepositoryMcpTool(name, { ...input, repository });
     default:
       return `Unknown tool: ${name || "(unnamed)"}.`;
   }

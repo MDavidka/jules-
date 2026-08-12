@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server";
 
-import { AppProfile, APP_PROFILE_ID, connectToDatabase } from "@/lib/mongodb.server";
+import { loadConnectedGitHubToken } from "@/lib/github-token.server";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/github/status
- * Returns whether a GitHub access token is currently stored.
+ * Returns whether a decryptable GitHub access token is currently stored.
  */
 export async function GET() {
   try {
-    await connectToDatabase();
-    const profile = await AppProfile.findById(APP_PROFILE_ID)
-      .select("githubAccessTokenEncrypted")
-      .lean();
-
-    const connected = Boolean(profile?.githubAccessTokenEncrypted);
-    return NextResponse.json({ connected });
+    const token = await loadConnectedGitHubToken();
+    return NextResponse.json({ connected: Boolean(token) });
   } catch {
     return NextResponse.json({ connected: false });
   }

@@ -125,7 +125,7 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
       role="group"
       aria-label="Memory board"
       className={cn(
-        "relative scrollbar-thin dot-grid min-h-[24rem] max-h-[70dvh] overflow-auto rounded-3xl border border-border/70 bg-card/40",
+        "relative scrollbar-thin dot-grid h-[min(70dvh,42rem)] min-h-[24rem] overflow-auto rounded-3xl border border-border/70 bg-card/40",
         className,
       )}
       style={{ touchAction: "pan-x pan-y" }}

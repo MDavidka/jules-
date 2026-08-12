@@ -3,7 +3,8 @@ import { createMemoryBlockFilter, MEMORY_BLOCK_INSTRUCTIONS, saveMemoryCards } f
 import { runDeepResearch } from "@/lib/agent-research.server";
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
 import { connectToDatabase, ConversationMessage } from "@/lib/mongodb.server";
-import { extractPublicRepositoryLinks, inspectPublicRepository } from "@/lib/nvidia-tools.server";
+import { extractPublicRepositoryLinks } from "@/lib/nvidia-tools.server";
+import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
 import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import { errorMessage } from "@/lib/utils";
@@ -31,6 +32,7 @@ interface IncomingAttachment {
   type: string;
   content?: string;
   dataUrl?: string;
+  isPromptAttachment?: boolean;
 }
 
 interface ProviderMessage {
@@ -72,6 +74,10 @@ export async function POST(request: Request) {
     const branch = typeof body.branch === "string" && body.branch.trim() ? body.branch.trim() : undefined;
     const memoryContext = typeof body.memoryContext === "string" ? body.memoryContext.trim().slice(0, 24_000) : "";
     const attachments = normalizeAttachments(body.attachments);
+    const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
+    // Long composer messages arrive as a markdown attachment so the model gets
+    // the complete request without relying on a large inline prompt field.
+    const intentPrompt = promptAttachment?.content?.trim() || prompt;
     const invalidImage = attachments.find((attachment) => attachment.type.startsWith("image/") && !isSafeImageDataUrl(attachment.dataUrl));
     if (invalidImage) {
       return jsonError(`The image "${invalidImage.name}" could not be prepared. Use a PNG, JPG, or WEBP image under 4 MB.`, 422, { code: "IMAGE_PREPARATION_FAILED" });
@@ -81,7 +87,7 @@ export async function POST(request: Request) {
       return jsonError(`The image "${oversizedImage.name}" is too large after compression.`, 413, { code: "IMAGE_TOO_LARGE" });
     }
 
-    const deepResearch = body.deepResearch === true || shouldRunDeepResearch(prompt);
+    const deepResearch = body.deepResearch === true || shouldRunDeepResearch(intentPrompt);
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
@@ -108,12 +114,14 @@ export async function POST(request: Request) {
 
           // Keep the fast path fast. Deep research already has repository tools,
           // so do not fetch the same README/manifests a second time first.
-          const repositoryInputs = [...new Set([...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)])];
+          const repositoryInputs = [...new Set([...(source ? [source] : []), ...extractPublicRepositoryLinks(intentPrompt)])];
           let research = "";
           if (repositoryInputs.length > 0 && !deepResearch) {
             sendStatus("inspecting");
             const repositoryResearch = await Promise.all(
-              repositoryInputs.slice(0, 2).map(async (repository) => inspectPublicRepository(repository)),
+              repositoryInputs.slice(0, 2).map(async (repository) =>
+                callRepositoryMcpTool("inspect_repository", { repository }),
+              ),
             );
             research = `Repository context:\n${repositoryResearch.join("\n\n")}`;
           }
@@ -125,7 +133,7 @@ export async function POST(request: Request) {
             deepFindings = await runDeepResearch({
               apiKey,
               model,
-              prompt,
+              prompt: intentPrompt,
               source: source || undefined,
               onActivity: sendStatus,
             });
@@ -250,12 +258,12 @@ export async function POST(request: Request) {
           if (!emittedToken) throw new Error("The model returned an empty response.");
 
           // Emit jules_fix_proposal AFTER the response is fully streamed
-          if (shouldOfferJulesFix(prompt, source)) {
+          if (shouldOfferJulesFix(intentPrompt, source)) {
             send({
               type: "jules_fix_proposal",
               proposal: {
                 prompt: buildJulesFixPrompt({
-                  userRequest: prompt,
+                  userRequest: intentPrompt,
                   source,
                   branch,
                   memoryContext,
@@ -282,10 +290,10 @@ export async function POST(request: Request) {
             await ConversationMessage.insertMany([
               {
                 role: "user",
-                content: prompt.slice(0, 20000),
+                content: intentPrompt.slice(0, 20000),
                 source: sourceValue,
                 summary: null,
-                tokenEstimate: Math.ceil(prompt.length / 4),
+                tokenEstimate: Math.ceil(intentPrompt.length / 4),
               },
               {
                 role: "assistant",
@@ -378,12 +386,13 @@ function normalizeAttachments(value: unknown): IncomingAttachment[] {
     .filter((item): item is IncomingAttachment =>
       Boolean(item && typeof item === "object" && typeof (item as { name?: unknown }).name === "string" && typeof (item as { type?: unknown }).type === "string"),
     )
-    .slice(0, 4)
+    .slice(0, 5)
     .map((item) => ({
       name: item.name.slice(0, 200),
       type: item.type.slice(0, 120),
       content: typeof item.content === "string" ? item.content.slice(0, 200_000) : undefined,
       dataUrl: typeof item.dataUrl === "string" ? item.dataUrl : undefined,
+      isPromptAttachment: item.isPromptAttachment === true,
     }));
 }
 

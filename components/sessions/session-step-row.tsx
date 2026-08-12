@@ -9,7 +9,9 @@ import { MarkdownContent } from "@/components/ui/markdown-content";
 import { cn } from "@/lib/utils";
 import type { SessionStep } from "@/lib/session-steps";
 
-/** A coloured chip carrying the language mark for the touched file or command. */
+const MAX_VISIBLE_FILE_CHIPS = 4;
+
+/** A small coloured chip carrying the language mark for a touched file. */
 function StepChip({ value }: { value: string }) {
   const meta = fileTypeMeta(value);
   const name = value.includes("/") ? value.split("/").pop()! : value;
@@ -21,10 +23,10 @@ function StepChip({ value }: { value: string }) {
         backgroundColor: tintedColor(meta.tint, 0.16),
         borderColor: tintedColor(meta.tint, 0.42),
       }}
-      className="mb-1 mr-1.5 inline-block whitespace-nowrap rounded-md border px-1.5 py-[3px] align-middle text-[11px] font-medium text-foreground/90"
+      className="mb-0.5 mr-1 inline-flex max-w-[13rem] items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 align-middle text-[10px] font-medium text-foreground/90"
     >
-      <FileTypeBadge path={value} className="mr-1 align-[-3px]" />
-      {name}
+      <FileTypeBadge path={value} className="mr-1" />
+      <span className="truncate">{name}</span>
     </span>
   );
 }
@@ -36,7 +38,28 @@ function StepChip({ value }: { value: string }) {
  */
 export function SessionStepRow({ step }: { step: SessionStep }) {
   const [open, setOpen] = React.useState(false);
+  const [showAllFiles, setShowAllFiles] = React.useState(false);
   const body = step.body?.trim() ? step.body : null;
+  const visibleChips = showAllFiles ? step.chips : step.chips.slice(0, MAX_VISIBLE_FILE_CHIPS);
+  const hasMoreChips = step.chips.length > MAX_VISIBLE_FILE_CHIPS;
+  const fileChips = step.chips.length > 0 ? (
+    <span className="inline">
+      {visibleChips.map((chip) => <StepChip key={chip} value={chip} />)}
+      {hasMoreChips ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            setShowAllFiles((current) => !current);
+          }}
+          aria-expanded={showAllFiles}
+          className="mb-0.5 mr-1 inline-block rounded px-1 py-0.5 align-middle text-[10px] font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {showAllFiles ? "Show less" : `Show more… (${step.chips.length - MAX_VISIBLE_FILE_CHIPS})`}
+        </button>
+      ) : null}
+    </span>
+  ) : null;
 
   if (step.isUser && body) {
     return (
@@ -79,7 +102,10 @@ export function SessionStepRow({ step }: { step: SessionStep }) {
   if (open && body) {
     return (
       <li className="py-2">
-        <div className="text-[13px] leading-6">{header}</div>
+        <div className="text-[13px] leading-6">
+          {header}
+          {fileChips}
+        </div>
         {step.markdown ? (
           <MarkdownContent className="mt-1 text-[13px] leading-6">{body}</MarkdownContent>
         ) : (
@@ -96,9 +122,7 @@ export function SessionStepRow({ step }: { step: SessionStep }) {
       {/* Collapsed rows clamp to two lines, header included, like the reference. */}
       <div className={cn("text-[13px] leading-6 text-muted-foreground", body && "line-clamp-2")}>
         {header}
-        {step.chips.map((chip) => (
-          <StepChip key={chip} value={chip} />
-        ))}
+        {fileChips}
         {body}
       </div>
     </li>
