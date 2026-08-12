@@ -10,17 +10,21 @@ export const AGENT_ACTIVITIES = [
   "inspecting",
   "saving",
   "working",
+  "waiting",
+  "done",
 ] as const;
 
 export type AgentActivity = (typeof AGENT_ACTIVITIES)[number];
 
 export const ACTIVITY_LABELS: Record<AgentActivity, string> = {
-  thinking: "thinking..",
-  reading: "reading..",
+  thinking: "analyzing your request..",
+  reading: "reading documentation..",
   searching: "searching the web..",
-  inspecting: "reading the repo..",
-  saving: "saving to database..",
-  working: "working hard..",
+  inspecting: "understanding the repository..",
+  saving: "saving to memory..",
+  working: "composing response..",
+  waiting: "rate limited, retrying..",
+  done: "done",
 };
 
 export function isAgentActivity(value: unknown): value is AgentActivity {

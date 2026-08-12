@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Github,
   KeyRound,
   LoaderCircle,
   ShieldCheck,
@@ -30,6 +31,7 @@ import { useToast } from "@/components/ui/toast";
 import { useDeleteApiKey, useJulesConfig, useSaveApiKey } from "@/hooks/use-jules-config";
 import { errorMessage, formatAbsoluteTime } from "@/lib/utils";
 import { julesApiKeySchema, type JulesApiKeyInput } from "@/lib/validators";
+import { GitHubConnectButton } from "@/components/settings/github-connect-button";
 
 export function SettingsView() {
   const { toast } = useToast();
@@ -192,6 +194,21 @@ export function SettingsView() {
           <Button type="submit" disabled={!nvidiaKey.trim() || savingNvidia}>{savingNvidia ? "Saving…" : nvidiaConfigured ? "Replace key" : "Save key"}</Button>
         </form>
         <p className="text-xs text-muted-foreground">Stored with the same AES-256-GCM protection as your Jules key. The browser never receives the key.</p>
+      </section>
+
+      {/* Links */}
+      <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-4">
+        <div className="flex items-center gap-2">
+          <Github className="h-4 w-4 text-foreground" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-medium">GitHub Connection</p>
+            <p className="text-xs text-muted-foreground">Connect your GitHub account for agent MCP and repository access.</p>
+          </div>
+        </div>
+        <GitHubConnectButton />
+        <p className="text-xs text-muted-foreground">
+          Set your redirect URI to: <code className="text-foreground/80">{"{APP_URL}"}/api/github/callback</code>
+        </p>
       </section>
 
       {/* Links */}

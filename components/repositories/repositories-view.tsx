@@ -3,6 +3,7 @@
 import {
   ExternalLink,
   GitBranch,
+  GitPullRequest,
   Github,
   Lock,
   RefreshCw,
@@ -18,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSessions } from "@/hooks/use-sessions";
 import { useSources } from "@/hooks/use-sources";
 import { cn, errorMessage } from "@/lib/utils";
-import type { NormalizedSource } from "@/types/jules";
+import type { NormalizedSession, NormalizedSource } from "@/types/jules";
 
 interface RepositoriesViewProps {
   enabled: boolean;
@@ -42,6 +43,18 @@ export function RepositoriesView({
         .map((session) => session.source)
         .filter((source): source is string => Boolean(source)),
     );
+  }, [sessionsQuery.data]);
+  const pullRequestsBySource = React.useMemo(() => {
+    const groups = new Map<string, NormalizedSession[]>();
+    for (const session of sessionsQuery.data?.items ?? []) {
+      if (!session.source || !session.pullRequestUrl) continue;
+      const sessions = groups.get(session.source) ?? [];
+      if (!sessions.some((item) => item.pullRequestUrl === session.pullRequestUrl)) {
+        sessions.push(session);
+      }
+      groups.set(session.source, sessions);
+    }
+    return groups;
   }, [sessionsQuery.data]);
   const interactedSources = React.useMemo(
     () => sources.filter((source) => source.name === selectedSource || interactedSourceNames.has(source.name)),
@@ -117,6 +130,7 @@ export function RepositoriesView({
               isSelected={source.name === selectedSource}
               onSelect={onSelectSource}
               onNewTask={onNewTask}
+              pullRequests={pullRequestsBySource.get(source.name) ?? []}
             />
           ))}
         </ul>
@@ -130,11 +144,13 @@ function RepositoryCard({
   isSelected,
   onSelect,
   onNewTask,
+  pullRequests,
 }: {
   source: NormalizedSource;
   isSelected: boolean;
   onSelect: (sourceName: string) => void;
   onNewTask: () => void;
+  pullRequests: NormalizedSession[];
 }) {
   return (
     <li
@@ -169,6 +185,23 @@ function RepositoryCard({
           </div>
         </div>
       </div>
+
+      {pullRequests.length > 0 ? (
+        <div className="space-y-1.5 border-t border-border/60 pt-3">
+          <p className="text-xs font-medium text-muted-foreground">Pull requests</p>
+          <div className="flex flex-wrap gap-2">
+            {pullRequests.map((session) => (
+              <Button key={session.pullRequestUrl} size="sm" variant="outline" asChild>
+                <a href={session.pullRequestUrl!} target="_blank" rel="noopener noreferrer">
+                  <GitPullRequest className="h-4 w-4" aria-hidden="true" />
+                  <span className="max-w-[16rem] truncate" title={session.pullRequestTitle ?? undefined}>View PR</span>
+                  <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
+                </a>
+              </Button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button

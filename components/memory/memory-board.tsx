@@ -40,9 +40,9 @@ interface MemoryBoardProps {
 }
 
 /**
- * Scrollable canvas of memory cards. Cards are laid out deterministically from
- * note order, and `note.connections` (ids of other notes) is drawn as curved
- * links behind the cards.
+ * Scrollable canvas of memory cards with pinch-to-zoom support.
+ * Cards are laid out deterministically from note order, and `note.connections`
+ * (ids of other notes) are drawn as curved links behind the cards.
  */
 export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps) {
   const { positioned, width, height } = React.useMemo(() => layoutNotes(notes), [notes]);
@@ -61,7 +61,7 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
         if (!target || target.note.id === item.note.id) continue;
 
         // Collapse mutual links so a pair is only drawn once.
-        const key = [item.note.id, target.note.id].sort().join("→");
+        const key = [item.note.id, target.note.id].sort().join("\u2192");
         if (seen.has(key)) continue;
         seen.add(key);
 
@@ -71,6 +71,38 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
 
     return edges;
   }, [positionById, positioned]);
+
+  // Pinch-to-zoom via touch events
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [scale, setScale] = React.useState(1);
+  const initialDistanceRef = React.useRef<number | null>(null);
+  const initialScaleRef = React.useRef(1);
+
+  const handleTouchStart = React.useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      initialDistanceRef.current = Math.hypot(dx, dy);
+      initialScaleRef.current = scale;
+    }
+  }, [scale]);
+
+  const handleTouchMove = React.useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2 && initialDistanceRef.current !== null) {
+      // Prevent the browser's native pinch-zoom from firing simultaneously
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const distance = Math.hypot(dx, dy);
+      const ratio = distance / initialDistanceRef.current;
+      const newScale = Math.min(2.5, Math.max(0.5, initialScaleRef.current * ratio));
+      setScale(newScale);
+    }
+  }, []);
+
+  const handleTouchEnd = React.useCallback(() => {
+    initialDistanceRef.current = null;
+  }, []);
 
   if (notes.length === 0) {
     return (
@@ -89,40 +121,55 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
 
   return (
     <div
+      ref={containerRef}
       role="group"
       aria-label="Memory board"
       className={cn(
-        "scrollbar-thin dot-grid max-h-[62dvh] overflow-auto rounded-3xl border border-border/70 bg-card/40",
+        "relative scrollbar-thin dot-grid h-[min(70dvh,42rem)] min-h-[24rem] overflow-auto rounded-3xl border border-border/70 bg-card/40",
         className,
       )}
+      style={{ touchAction: "pan-x pan-y" }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
-      <div className="relative" style={{ width, height }}>
-        <svg
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          width={width}
-          height={height}
+      <div className="relative" style={{ width: width * scale, height: height * scale }}>
+        <div
+          className="relative"
+          style={{
+            width,
+            height,
+            transform: `scale(${scale})`,
+            transformOrigin: "top left",
+          }}
         >
-          {links.map((link) => (
-            <path
-              key={link.key}
-              d={link.path}
-              fill="none"
-              stroke="hsl(0 0% 72%)"
-              strokeOpacity={0.55}
-              strokeWidth={1.25}
+          <svg
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            width={width}
+            height={height}
+          >
+            {links.map((link) => (
+              <path
+                key={link.key}
+                d={link.path}
+                fill="none"
+                stroke="hsl(0 0% 72%)"
+                strokeOpacity={0.55}
+                strokeWidth={1.25}
+              />
+            ))}
+          </svg>
+
+          {positioned.map(({ note, x, y, height: cardHeight }) => (
+            <MemoryCard
+              key={note.id}
+              note={note}
+              style={{ left: x, top: y, width: CARD_WIDTH, minHeight: cardHeight }}
+              onSelect={onSelectNote}
             />
           ))}
-        </svg>
-
-        {positioned.map(({ note, x, y, height: cardHeight }) => (
-          <MemoryCard
-            key={note.id}
-            note={note}
-            style={{ left: x, top: y, width: CARD_WIDTH, minHeight: cardHeight }}
-            onSelect={onSelectNote}
-          />
-        ))}
+        </div>
       </div>
     </div>
   );
@@ -239,7 +286,7 @@ function formatValue(value: unknown): string {
 
 function excerpt(content: string) {
   const collapsed = content.replace(/\s+/g, " ").trim();
-  return collapsed.length > 64 ? `${collapsed.slice(0, 63)}…` : collapsed;
+  return collapsed.length > 64 ? `${collapsed.slice(0, 63)}\u2026` : collapsed;
 }
 
 function isGitHubConnection(note: MemoryNote) {

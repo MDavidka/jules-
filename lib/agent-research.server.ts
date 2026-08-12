@@ -1,17 +1,16 @@
 import {
-  inspectPublicRepository,
-  listRepositoryTree,
-  readRepositoryFile,
   readWebPage,
   searchWeb,
 } from "@/lib/nvidia-tools.server";
+import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
 import { NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
+import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import type { AgentActivity } from "@/lib/agent-activity";
 
 /** Hard ceiling on tool-calling rounds, so a confused model cannot loop forever. */
-const MAX_STEPS = 6;
-const MAX_TOOL_CALLS_PER_STEP = 3;
-const STEP_TIMEOUT_MS = 45_000;
+const MAX_STEPS = 4;
+const MAX_TOOL_CALLS_PER_STEP = 2;
+const STEP_TIMEOUT_MS = 25_000;
 
 const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
   search_web: "searching",
@@ -165,7 +164,7 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
 
   try {
     for (let step = 0; step < MAX_STEPS; step += 1) {
-      onActivity?.(step === 0 ? "thinking" : "working");
+      onActivity?.(step === 0 ? "thinking" : "reading");
 
       const choice = await requestCompletion({ apiKey, model, messages });
       if (!choice) break;
@@ -223,7 +222,7 @@ async function requestCompletion({
   const timeout = setTimeout(() => controller.abort(), STEP_TIMEOUT_MS);
 
   try {
-    const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
+    const response = await rateLimitedFetch(NVIDIA_CHAT_COMPLETIONS_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       signal: controller.signal,
@@ -234,7 +233,7 @@ async function requestCompletion({
         tools: TOOL_DEFINITIONS,
         tool_choice: "auto",
         temperature: 0.1,
-        max_tokens: 900,
+        max_tokens: 700,
       }),
     });
     if (!response.ok) return null;
@@ -253,7 +252,9 @@ async function executeTool(
   input: Record<string, unknown>,
   source: string | undefined,
 ): Promise<string> {
-  const repository = asString(input.repository) || source || "";
+  // A scoped run must stay on its assigned repository even if the model
+  // supplies a different repository argument in a tool call.
+  const repository = source || asString(input.repository);
 
   switch (name) {
     case "search_web":
@@ -261,11 +262,9 @@ async function executeTool(
     case "read_web_page":
       return readWebPage(asString(input.url));
     case "list_repository_files":
-      return listRepositoryTree(repository);
     case "read_repository_file":
-      return readRepositoryFile(repository, asString(input.path));
     case "inspect_repository":
-      return inspectPublicRepository(repository);
+      return callRepositoryMcpTool(name, { ...input, repository });
     default:
       return `Unknown tool: ${name || "(unnamed)"}.`;
   }

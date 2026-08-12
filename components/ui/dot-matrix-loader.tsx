@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 export { ACTIVITY_LABELS, AGENT_ACTIVITIES, isAgentActivity, type AgentActivity } from "@/lib/agent-activity";
 
-const GRID_SIZE = 5;
+const GRID_SIZE = 3;
 /** Turns per unit radius: higher values tighten the spiral arms. */
 const SPIRAL_TWIST = 0.55;
 const REVOLUTIONS_PER_SECOND = 0.85;
@@ -77,7 +77,7 @@ export function DotMatrixLoader({
   return (
     <span
       aria-hidden="true"
-      className={cn("grid shrink-0 gap-[3px]", className)}
+      className={cn("grid shrink-0 gap-[2px]", className)}
       style={{ gridTemplateColumns: `repeat(${GRID_SIZE}, minmax(0, 1fr))` }}
     >
       {dots.map((dot, index) => (
@@ -86,7 +86,7 @@ export function DotMatrixLoader({
           ref={(node) => {
             nodesRef.current[index] = node;
           }}
-          className={cn("h-1 w-1 rounded-full bg-foreground", dotClassName)}
+          className={cn("h-[3px] w-[3px] rounded-full bg-foreground", dotClassName)}
           style={{ opacity: MIN_OPACITY }}
         />
       ))}
@@ -106,7 +106,7 @@ export function AgentActivityIndicator({
     <p
       role="status"
       aria-live="polite"
-      className={cn("flex items-center gap-3 text-base font-semibold text-foreground", className)}
+      className={cn("flex items-center gap-2 text-sm font-semibold text-foreground", className)}
     >
       <DotMatrixLoader />
       {ACTIVITY_LABELS[activity]}

@@ -1,9 +1,9 @@
 import {
-  BrainCircuit,
   Clock3,
-  Github,
   House,
   SquarePen,
+  SquareTerminal,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 
@@ -13,6 +13,7 @@ export type ViewId =
   | "repositories"
   | "automations"
   | "dashboard"
+  | "checks"
   | "settings"
   | "session";
 
@@ -25,10 +26,10 @@ export interface NavItem {
 /** Primary navigation, in the same order as the reference design. */
 export const NAV_ITEMS: NavItem[] = [
   { id: "new-task", label: "New Task", icon: SquarePen },
-  { id: "memory", label: "Memory", icon: BrainCircuit },
-  { id: "repositories", label: "Repositories", icon: Github },
+  { id: "memory", label: "Memory", icon: Workflow },
   { id: "automations", label: "Automations", icon: Clock3 },
-  { id: "dashboard", label: "Dashboard", icon: House },
+  { id: "dashboard", label: "Sessions", icon: House },
+  { id: "checks", label: "SSH / Checks", icon: SquareTerminal },
 ];
 
 export const VIEW_TITLES: Record<ViewId, string> = {
@@ -36,7 +37,8 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   memory: "Memory",
   repositories: "Repositories",
   automations: "Automations",
-  dashboard: "Dashboard",
+  dashboard: "Sessions",
+  checks: "SSH / Checks",
   settings: "Settings",
-  session: "Task",
+  session: "Session",
 };

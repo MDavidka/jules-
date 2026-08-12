@@ -2,10 +2,18 @@ import type { AgentActivity } from "@/lib/agent-activity";
 import { createMemoryBlockFilter, MEMORY_BLOCK_INSTRUCTIONS, saveMemoryCards } from "@/lib/agent-memory.server";
 import { runDeepResearch } from "@/lib/agent-research.server";
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
-import { extractPublicRepositoryLinks, inspectPublicRepository } from "@/lib/nvidia-tools.server";
+import { connectToDatabase, ConversationMessage } from "@/lib/mongodb.server";
+import { extractPublicRepositoryLinks } from "@/lib/nvidia-tools.server";
+import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
 import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
+import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import { errorMessage } from "@/lib/utils";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
+import {
+  MAX_REPOSITORY_TARGETS,
+  MAX_RESEARCH_REPOSITORIES,
+  sourceResourceNameSchema,
+} from "@/lib/validators";
 
 const MODEL_IDS: ReadonlySet<string> = new Set(NVIDIA_MODELS.map((item) => item.id));
 const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
@@ -15,6 +23,10 @@ const SYSTEM_PROMPT = [
   "Answer in concise markdown, using the repository context, research findings, attached files, and image analysis provided with the request.",
   "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
   "Never start or stop a Jules session without first proposing an explicit confirmation step.",
+  "When a repository is selected, always reference specific file paths and code patterns from the research findings.",
+  "Use saved memory notes as authoritative context about the project. If memory mentions conventions or patterns, follow them in your suggestions.",
+  "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
+  "Reference previous conversation context provided to maintain continuity. Avoid repeating explanations already given in earlier messages.",
   MEMORY_BLOCK_INSTRUCTIONS,
 ].join(" ");
 
@@ -25,6 +37,7 @@ interface IncomingAttachment {
   type: string;
   content?: string;
   dataUrl?: string;
+  isPromptAttachment?: boolean;
 }
 
 interface ProviderMessage {
@@ -39,7 +52,10 @@ export async function POST(request: Request) {
       model?: unknown;
       history?: unknown;
       source?: unknown;
+      branch?: unknown;
+      memoryContext?: unknown;
       attachments?: unknown;
+      researchRepositories?: unknown;
       deepResearch?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
@@ -61,7 +77,14 @@ export async function POST(request: Request) {
           .map((item) => ({ role: item.role, content: item.content.slice(0, 20_000) }))
       : [];
     const source = typeof body.source === "string" ? body.source : "";
+    const branch = typeof body.branch === "string" && body.branch.trim() ? body.branch.trim() : undefined;
+    const memoryContext = typeof body.memoryContext === "string" ? body.memoryContext.trim().slice(0, 24_000) : "";
     const attachments = normalizeAttachments(body.attachments);
+    const researchRepositories = normalizeResearchRepositories(body.researchRepositories);
+    const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
+    // Long composer messages arrive as a markdown attachment so the model gets
+    // the complete request without relying on a large inline prompt field.
+    const intentPrompt = promptAttachment?.content?.trim() || prompt;
     const invalidImage = attachments.find((attachment) => attachment.type.startsWith("image/") && !isSafeImageDataUrl(attachment.dataUrl));
     if (invalidImage) {
       return jsonError(`The image "${invalidImage.name}" could not be prepared. Use a PNG, JPG, or WEBP image under 4 MB.`, 422, { code: "IMAGE_PREPARATION_FAILED" });
@@ -71,7 +94,7 @@ export async function POST(request: Request) {
       return jsonError(`The image "${oversizedImage.name}" is too large after compression.`, 413, { code: "IMAGE_TOO_LARGE" });
     }
 
-    const deepResearch = body.deepResearch !== false;
+    const deepResearch = body.deepResearch === true || shouldRunDeepResearch(intentPrompt);
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
@@ -96,36 +119,103 @@ export async function POST(request: Request) {
             imageContext = await describeImages(attachments, apiKey);
           }
 
-          // Quick pass: always pull context for repositories named in the prompt.
-          const repositoryInputs = [...new Set([...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)])];
+          const repositoryInputs = [...new Set([
+            ...(source ? [source] : []),
+            ...researchRepositories,
+            ...extractPublicRepositoryLinks(intentPrompt),
+          ])].slice(0, MAX_REPOSITORY_TARGETS);
           let research = "";
-          if (repositoryInputs.length > 0) {
+          if (repositoryInputs.length > 0 && !deepResearch) {
             sendStatus("inspecting");
             const repositoryResearch = await Promise.all(
-              repositoryInputs.slice(0, 4).map(async (repository) => inspectPublicRepository(repository)),
+              repositoryInputs.map(async (repository) => {
+                const result = await callRepositoryMcpTool("inspect_repository", { repository });
+                return `Repository context for ${repository}:\n${result}`;
+              }),
             );
-            research = `Repository context:\n${repositoryResearch.join("\n\n")}`;
+            research = repositoryResearch.join("\n\n");
           }
 
-          // Deep pass: let the agent search the web and walk the repo itself.
+          // Deep traversal runs independently for each selected repository so
+          // the research model cannot accidentally treat one codebase as another.
           let deepFindings = "";
           if (deepResearch) {
-            deepFindings = await runDeepResearch({
-              apiKey,
-              model,
-              prompt,
-              source: source || undefined,
-              onActivity: sendStatus,
-            });
+            const deepTargets = repositoryInputs.length > 0 ? repositoryInputs : [undefined];
+            const findings = await Promise.all(
+              deepTargets.map(async (repository) => {
+                const scopedPrompt = repository
+                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request:\n${intentPrompt}`
+                  : intentPrompt;
+                return {
+                  repository,
+                  findings: await runDeepResearch({
+                    apiKey,
+                    model,
+                    prompt: scopedPrompt,
+                    source: repository,
+                    onActivity: sendStatus,
+                  }),
+                };
+              }),
+            );
+            deepFindings = findings
+              .filter((item) => item.findings)
+              .map((item) => item.repository ? `Research findings for ${item.repository}:\n${item.findings}` : item.findings)
+              .join("\n\n");
           }
 
           sendStatus("working");
 
-          const userContent = [prompt, research, deepFindings, fileContext, imageContext]
+          // Fetch older conversation messages for continuity context.
+          // Hybrid heuristic: always include the last 3 messages (most recent context),
+          // then fill remaining budget with shorter historical messages for efficiency.
+          let conversationContext = "";
+          try {
+            await connectToDatabase();
+            const recentMessages = await ConversationMessage.find(
+              source ? { source } : { source: null },
+            )
+              .sort({ createdAt: -1 })
+              .limit(10)
+              .lean<Array<{ role: string; content: string; tokenEstimate: number; createdAt: Date }>>()
+              .exec();
+
+            if (recentMessages.length > 0) {
+              // Always keep the last 3 messages regardless of length for recency
+              const alwaysInclude = recentMessages.slice(0, 3);
+              // From the remaining older messages, prefer shorter ones for budget efficiency
+              const older = recentMessages.slice(3);
+              const shorterOlder = [...older]
+                .sort((a, b) => a.tokenEstimate - b.tokenEstimate)
+                .slice(0, 5);
+
+              const prioritized = [...alwaysInclude, ...shorterOlder];
+              // Sort final set chronologically (oldest first) for natural reading order
+              prioritized.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+              conversationContext =
+                "Previous conversation (for continuity):\n" +
+                prioritized
+                  .map((m) => `[${m.role}]: ${m.content.slice(0, 500)}`)
+                  .join("\n");
+            }
+          } catch {
+            // DB failures must not block the response
+          }
+
+          const userContent = [
+            prompt,
+            memoryContext ? `Known project memory:\n${memoryContext}` : "",
+            conversationContext,
+            research,
+            deepFindings,
+            fileContext,
+            imageContext,
+          ]
             .filter(Boolean)
             .join("\n\n");
 
-          const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
+          const response = await rateLimitedFetch(NVIDIA_CHAT_COMPLETIONS_URL, {
             method: "POST",
             headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -141,6 +231,9 @@ export async function POST(request: Request) {
             }),
           });
           if (!response.ok || !response.body) {
+            if (response.status === 429) {
+              sendStatus("waiting");
+            }
             const data = (await response.json().catch(() => null)) as { message?: unknown } | null;
             throw new Error(
               typeof data?.message === "string" ? data.message : `The model request failed (${response.status}).`,
@@ -152,6 +245,7 @@ export async function POST(request: Request) {
           const memoryFilter = createMemoryBlockFilter();
           let buffer = "";
           let emittedToken = false;
+          let fullResponse = "";
 
           const processLine = (line: string) => {
             if (!line.startsWith("data:")) return;
@@ -168,6 +262,7 @@ export async function POST(request: Request) {
             if (typeof token !== "string" || token.length === 0) return;
 
             emittedToken = true;
+            fullResponse += token;
             const visible = memoryFilter.push(token);
             if (visible) send({ type: "token", value: visible });
           };
@@ -187,6 +282,28 @@ export async function POST(request: Request) {
           if (trailing) send({ type: "token", value: trailing });
           if (!emittedToken) throw new Error("The model returned an empty response.");
 
+          // Emit jules_fix_proposal AFTER the response is fully streamed
+          if (
+            repositoryInputs.length <= 1 &&
+            (researchRepositories.length === 0 || researchRepositories.includes(source)) &&
+            shouldOfferJulesFix(intentPrompt, source)
+          ) {
+            send({
+              type: "jules_fix_proposal",
+              proposal: {
+                prompt: buildJulesFixPrompt({
+                  userRequest: intentPrompt,
+                  source,
+                  branch,
+                  memoryContext,
+                }),
+                source,
+                branch,
+                title: buildFixTitle(prompt, source),
+              },
+            });
+          }
+
           // Persist anything the model wrote to the memory board.
           const memoryBlock = memoryFilter.memoryBlock();
           if (memoryBlock) {
@@ -195,6 +312,31 @@ export async function POST(request: Request) {
             if (saved > 0) send({ type: "memory", saved });
           }
 
+          // Save conversation messages for agentic memory
+          try {
+            await connectToDatabase();
+            const sourceValue = source || null;
+            await ConversationMessage.insertMany([
+              {
+                role: "user",
+                content: intentPrompt.slice(0, 20000),
+                source: sourceValue,
+                summary: null,
+                tokenEstimate: Math.ceil(intentPrompt.length / 4),
+              },
+              {
+                role: "assistant",
+                content: fullResponse.slice(0, 20000),
+                source: sourceValue,
+                summary: null,
+                tokenEstimate: Math.ceil(fullResponse.length / 4),
+              },
+            ]);
+          } catch {
+            // Failures saving conversation history must not break the response
+          }
+
+          sendStatus("done");
           send({ type: "done" });
           controller.close();
         } catch (error) {
@@ -273,15 +415,89 @@ function normalizeAttachments(value: unknown): IncomingAttachment[] {
     .filter((item): item is IncomingAttachment =>
       Boolean(item && typeof item === "object" && typeof (item as { name?: unknown }).name === "string" && typeof (item as { type?: unknown }).type === "string"),
     )
-    .slice(0, 4)
+    .slice(0, 5)
     .map((item) => ({
       name: item.name.slice(0, 200),
       type: item.type.slice(0, 120),
       content: typeof item.content === "string" ? item.content.slice(0, 200_000) : undefined,
       dataUrl: typeof item.dataUrl === "string" ? item.dataUrl : undefined,
+      isPromptAttachment: item.isPromptAttachment === true,
     }));
+}
+
+function normalizeResearchRepositories(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) =>
+        item.startsWith("sources/github/") && sourceResourceNameSchema.safeParse(item).success,
+      ),
+  )].slice(0, MAX_RESEARCH_REPOSITORIES);
 }
 
 function isSafeImageDataUrl(value: string | undefined): value is string {
   return typeof value === "string" && /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(value);
+}
+
+
+function shouldOfferJulesFix(prompt: string, source: string) {
+  return Boolean(source.startsWith("sources/github/") && /\b(fix|bug|broken|error|failing|failure|issue|debug|repair|regression|not working)\b/i.test(prompt));
+}
+
+function shouldRunDeepResearch(prompt: string) {
+  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through)\b/i.test(prompt);
+}
+
+function buildFixTitle(prompt: string, source: string) {
+  const compact = prompt.replace(/\s+/g, " ").trim().replace(/^fix:\s*/i, "");
+  const repository = source.replace(/^sources\/github\//, "") || "repository";
+  return `Investigate and fix ${repository}: ${compact.slice(0, 120)}`;
+}
+
+function buildJulesFixPrompt({
+  userRequest,
+  source,
+  branch,
+  memoryContext,
+}: {
+  userRequest: string;
+  source: string;
+  branch?: string;
+  memoryContext: string;
+}) {
+  const repository = source.replace(/^sources\/github\//, "") || "the selected repository";
+  const selectedBranch = branch || "the repository default branch";
+  const memorySection = memoryContext
+    ? `Known project memory (use it as context, not as a substitute for inspecting the code):\n${memoryContext}`
+    : "No saved project memory was attached. Inspect the repository and establish the relevant conventions before editing.";
+
+  return [
+    "Act as the implementation engineer for a repository fix.",
+    `Repository: ${repository}`,
+    `Working branch: ${selectedBranch}`,
+    "",
+    "Objective",
+    "Diagnose and resolve the problem described below. Do not merely restate or copy the report: inspect the repository, identify the actual root cause, and implement the smallest complete production-quality fix.",
+    "",
+    `User-reported problem:\n${userRequest}`,
+    "",
+    memorySection,
+    "",
+    "Required approach",
+    "1. Inspect the relevant code paths, configuration, and existing patterns before making changes.",
+    "2. Reproduce or reason through the failure and identify its root cause.",
+    "3. Implement a focused fix that preserves existing behavior outside this issue.",
+    "4. Update related UI, API, types, or documentation when the fix requires it.",
+    "5. Run the most relevant available checks and report their results, including any environment limitations.",
+    "6. Summarize the root cause, changed files, verification, and any follow-up risks.",
+    "",
+    "Acceptance criteria",
+    "- The reported problem is resolved rather than hidden or bypassed.",
+    "- The implementation follows the repository's existing architecture and conventions.",
+    "- Existing functionality remains intact.",
+    "- Verification evidence is included in the final report.",
+  ].join("\n");
 }

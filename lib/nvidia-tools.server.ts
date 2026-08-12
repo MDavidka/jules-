@@ -1,10 +1,21 @@
+import "server-only";
+
 const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
 const USER_AGENT = "jules-plus research reader";
 const REQUEST_TIMEOUT_MS = 15_000;
-const GITHUB_API_HEADERS = {
+const GITHUB_API_HEADERS: Record<string, string> = {
   Accept: "application/vnd.github+json",
   "User-Agent": "jules-plus",
-} as const;
+  ...(process.env.GITHUB_API_KEY?.trim()
+    ? { Authorization: `Bearer ${process.env.GITHUB_API_KEY.trim()}` }
+    : {}),
+};
+
+function githubHeaders(accessToken?: string): Record<string, string> {
+  return accessToken?.trim()
+    ? { ...GITHUB_API_HEADERS, Authorization: `Bearer ${accessToken.trim()}` }
+    : GITHUB_API_HEADERS;
+}
 
 const README_FILES = ["README.md", "readme.md", "README.txt", "README"];
 const MANIFEST_FILES = [
@@ -67,7 +78,7 @@ export function extractPublicRepositoryLinks(value: string): string[] {
  * pulls the repository's raw git content (README plus common manifests) so the
  * model can describe what the codebase is about.
  */
-export async function inspectPublicRepository(source: string) {
+export async function inspectPublicRepository(source: string, accessToken?: string) {
   const repo = resolveGitHubRepo(source);
   if (!repo) return "No repository was selected.";
 
@@ -76,16 +87,16 @@ export async function inspectPublicRepository(source: string) {
 
   const [repoResponse, apiReadmeResponse, ...probeResponses] = await Promise.all([
     fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "jules-plus" },
+      headers: githubHeaders(accessToken),
       next: { revalidate: 300 },
     }),
     fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/readme`, {
-      headers: { Accept: "application/vnd.github.raw+json", "User-Agent": "jules-plus" },
+      headers: { ...githubHeaders(accessToken), Accept: "application/vnd.github.raw+json" },
       next: { revalidate: 300 },
     }),
     ...probePaths.map((path) =>
       fetch(`${rawBase}/${path}`, {
-        headers: { "User-Agent": "jules-plus" },
+        headers: githubHeaders(accessToken),
         next: { revalidate: 300 },
       }),
     ),
@@ -246,14 +257,14 @@ function resolveDuckDuckGoHref(href: string): string | null {
  * Lists a repository's file tree so a multi-step agent can decide which files
  * are worth reading next.
  */
-export async function listRepositoryTree(source: string, limit = 400): Promise<string> {
+export async function listRepositoryTree(source: string, limit = 400, accessToken?: string): Promise<string> {
   const repo = resolveGitHubRepo(source);
   if (!repo) return "No repository was selected.";
 
-  const branch = await resolveDefaultBranch(repo);
+  const branch = await resolveDefaultBranch(repo, accessToken);
   const response = await fetchWithTimeout(
     `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
-    { headers: GITHUB_API_HEADERS, next: { revalidate: 300 } },
+    { headers: githubHeaders(accessToken), next: { revalidate: 300 } },
   );
   if (!response.ok) {
     return `Could not list ${repo.owner}/${repo.repo} at ${branch} (${response.status}).`;
@@ -282,18 +293,18 @@ export async function listRepositoryTree(source: string, limit = 400): Promise<s
 }
 
 /** Reads a single file from a public repository, for step-by-step exploration. */
-export async function readRepositoryFile(source: string, path: string): Promise<string> {
+export async function readRepositoryFile(source: string, path: string, accessToken?: string): Promise<string> {
   const repo = resolveGitHubRepo(source);
   if (!repo) return "No repository was selected.";
 
   const cleanPath = path.trim().replace(/^\/+/, "");
   if (!cleanPath || cleanPath.includes("..")) return `Invalid file path: ${path}`;
 
-  const branch = await resolveDefaultBranch(repo);
+  const branch = await resolveDefaultBranch(repo, accessToken);
   const encodedPath = cleanPath.split("/").map(encodeURIComponent).join("/");
   const response = await fetchWithTimeout(
     `${GITHUB_RAW_BASE}/${repo.owner}/${repo.repo}/${encodeURIComponent(branch)}/${encodedPath}`,
-    { headers: { "User-Agent": USER_AGENT }, next: { revalidate: 300 } },
+    { headers: githubHeaders(accessToken), next: { revalidate: 300 } },
   );
   if (!response.ok) return `Could not read ${cleanPath} (${response.status}).`;
 
@@ -301,11 +312,11 @@ export async function readRepositoryFile(source: string, path: string): Promise<
   return JSON.stringify({ repository: `${repo.owner}/${repo.repo}`, branch, path: cleanPath, content }, null, 2);
 }
 
-async function resolveDefaultBranch(repo: ResolvedRepo): Promise<string> {
+async function resolveDefaultBranch(repo: ResolvedRepo, accessToken?: string): Promise<string> {
   try {
     const response = await fetchWithTimeout(
       `https://api.github.com/repos/${repo.owner}/${repo.repo}`,
-      { headers: GITHUB_API_HEADERS, next: { revalidate: 300 } },
+      { headers: githubHeaders(accessToken), next: { revalidate: 300 } },
     );
     if (!response.ok) return "HEAD";
     const meta = (await response.json()) as { default_branch?: string };
