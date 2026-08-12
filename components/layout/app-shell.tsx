@@ -178,7 +178,11 @@ function ConfiguredApp() {
     setActiveView("session");
   };
 
-  const handleSubmitTask = async (prompt: string, attachments: AgentAttachment[]) => {
+  const handleSubmitTask = async (
+    prompt: string,
+    attachments: AgentAttachment[],
+    researchRepositories: string[],
+  ) => {
     const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
     const displayPrompt = promptAttachment?.content?.trim() || prompt;
     const memoryContext = pinnedNotes
@@ -203,6 +207,7 @@ function ConfiguredApp() {
           branch: branch ?? selectedSource?.defaultBranch ?? undefined,
           memoryContext,
           attachments,
+          researchRepositories,
           history: assistantMessages,
         }),
       });

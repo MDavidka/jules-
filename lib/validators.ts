@@ -67,6 +67,10 @@ export const listActivitiesQuerySchema = paginationSchema;
 
 export const PROMPT_MIN_LENGTH = 1;
 export const PROMPT_MAX_LENGTH = 10_000;
+/** Maximum number of additional repositories selectable from the composer. */
+export const MAX_RESEARCH_REPOSITORIES = 4;
+/** Includes the primary repository plus explicit research targets. */
+export const MAX_REPOSITORY_TARGETS = MAX_RESEARCH_REPOSITORIES + 1;
 
 export const createSessionSchema = z.object({
   prompt: z

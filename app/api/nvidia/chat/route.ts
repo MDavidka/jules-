@@ -9,6 +9,11 @@ import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.serv
 import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import { errorMessage } from "@/lib/utils";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
+import {
+  MAX_REPOSITORY_TARGETS,
+  MAX_RESEARCH_REPOSITORIES,
+  sourceResourceNameSchema,
+} from "@/lib/validators";
 
 const MODEL_IDS: ReadonlySet<string> = new Set(NVIDIA_MODELS.map((item) => item.id));
 const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
@@ -50,6 +55,7 @@ export async function POST(request: Request) {
       branch?: unknown;
       memoryContext?: unknown;
       attachments?: unknown;
+      researchRepositories?: unknown;
       deepResearch?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
@@ -74,6 +80,7 @@ export async function POST(request: Request) {
     const branch = typeof body.branch === "string" && body.branch.trim() ? body.branch.trim() : undefined;
     const memoryContext = typeof body.memoryContext === "string" ? body.memoryContext.trim().slice(0, 24_000) : "";
     const attachments = normalizeAttachments(body.attachments);
+    const researchRepositories = normalizeResearchRepositories(body.researchRepositories);
     const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
     // Long composer messages arrive as a markdown attachment so the model gets
     // the complete request without relying on a large inline prompt field.
@@ -112,31 +119,49 @@ export async function POST(request: Request) {
             imageContext = await describeImages(attachments, apiKey);
           }
 
-          // Keep the fast path fast. Deep research already has repository tools,
-          // so do not fetch the same README/manifests a second time first.
-          const repositoryInputs = [...new Set([...(source ? [source] : []), ...extractPublicRepositoryLinks(intentPrompt)])];
+          const repositoryInputs = [...new Set([
+            ...(source ? [source] : []),
+            ...researchRepositories,
+            ...extractPublicRepositoryLinks(intentPrompt),
+          ])].slice(0, MAX_REPOSITORY_TARGETS);
           let research = "";
           if (repositoryInputs.length > 0 && !deepResearch) {
             sendStatus("inspecting");
             const repositoryResearch = await Promise.all(
-              repositoryInputs.slice(0, 2).map(async (repository) =>
-                callRepositoryMcpTool("inspect_repository", { repository }),
-              ),
+              repositoryInputs.map(async (repository) => {
+                const result = await callRepositoryMcpTool("inspect_repository", { repository });
+                return `Repository context for ${repository}:\n${result}`;
+              }),
             );
-            research = `Repository context:\n${repositoryResearch.join("\n\n")}`;
+            research = repositoryResearch.join("\n\n");
           }
 
-          // Deep traversal is opt-in by wording (or an explicit API flag),
-          // avoiding several slow tool rounds for ordinary questions.
+          // Deep traversal runs independently for each selected repository so
+          // the research model cannot accidentally treat one codebase as another.
           let deepFindings = "";
           if (deepResearch) {
-            deepFindings = await runDeepResearch({
-              apiKey,
-              model,
-              prompt: intentPrompt,
-              source: source || undefined,
-              onActivity: sendStatus,
-            });
+            const deepTargets = repositoryInputs.length > 0 ? repositoryInputs : [undefined];
+            const findings = await Promise.all(
+              deepTargets.map(async (repository) => {
+                const scopedPrompt = repository
+                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request:\n${intentPrompt}`
+                  : intentPrompt;
+                return {
+                  repository,
+                  findings: await runDeepResearch({
+                    apiKey,
+                    model,
+                    prompt: scopedPrompt,
+                    source: repository,
+                    onActivity: sendStatus,
+                  }),
+                };
+              }),
+            );
+            deepFindings = findings
+              .filter((item) => item.findings)
+              .map((item) => item.repository ? `Research findings for ${item.repository}:\n${item.findings}` : item.findings)
+              .join("\n\n");
           }
 
           sendStatus("working");
@@ -258,7 +283,11 @@ export async function POST(request: Request) {
           if (!emittedToken) throw new Error("The model returned an empty response.");
 
           // Emit jules_fix_proposal AFTER the response is fully streamed
-          if (shouldOfferJulesFix(intentPrompt, source)) {
+          if (
+            repositoryInputs.length <= 1 &&
+            (researchRepositories.length === 0 || researchRepositories.includes(source)) &&
+            shouldOfferJulesFix(intentPrompt, source)
+          ) {
             send({
               type: "jules_fix_proposal",
               proposal: {
@@ -394,6 +423,19 @@ function normalizeAttachments(value: unknown): IncomingAttachment[] {
       dataUrl: typeof item.dataUrl === "string" ? item.dataUrl : undefined,
       isPromptAttachment: item.isPromptAttachment === true,
     }));
+}
+
+function normalizeResearchRepositories(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) =>
+        item.startsWith("sources/github/") && sourceResourceNameSchema.safeParse(item).success,
+      ),
+  )].slice(0, MAX_RESEARCH_REPOSITORIES);
 }
 
 function isSafeImageDataUrl(value: string | undefined): value is string {

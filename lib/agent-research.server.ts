@@ -252,7 +252,9 @@ async function executeTool(
   input: Record<string, unknown>,
   source: string | undefined,
 ): Promise<string> {
-  const repository = asString(input.repository) || source || "";
+  // A scoped run must stay on its assigned repository even if the model
+  // supplies a different repository argument in a tool call.
+  const repository = source || asString(input.repository);
 
   switch (name) {
     case "search_web":
