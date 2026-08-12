@@ -99,7 +99,7 @@ export async function POST(request: Request) {
         messages: [
           {
             role: "system",
-            content: "You are the Jules+ project memory assistant. Think in concise steps. Use the MCP repository context, public links, attached files, and images to understand the request. Gather durable user/project memory. Never start or stop Jules without proposing an explicit confirmation action card.",
+            content: "You are the Jules DeepDive project memory assistant. Think in concise steps. Use the MCP repository context, public links, attached files, and images to understand the request. Gather durable user/project memory. Never start or stop Jules without proposing an explicit confirmation action card.",
           },
           ...history,
           { role: "user", content: userContent },

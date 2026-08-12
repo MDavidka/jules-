@@ -100,7 +100,7 @@ export const sendMessageSchema = z.object({
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 
 /* -------------------------------------------------------------------------- */
-/*                              Memory (Jules+)                               */
+/*                              Memory (Jules DeepDive)                               */
 /* -------------------------------------------------------------------------- */
 
 export const createMemorySchema = z.object({
@@ -116,7 +116,7 @@ export const createMemorySchema = z.object({
 export type CreateMemoryInput = z.infer<typeof createMemorySchema>;
 
 /* -------------------------------------------------------------------------- */
-/*                            Preferences (Jules+)                            */
+/*                            Preferences (Jules DeepDive)                            */
 /* -------------------------------------------------------------------------- */
 
 export const updatePreferencesSchema = z
