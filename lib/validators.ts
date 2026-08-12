@@ -117,7 +117,7 @@ export const sendMessageSchema = z.object({
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 
 /* -------------------------------------------------------------------------- */
-/*                              Memory (Jules+)                               */
+/*                              Memory (Jules DeepDive)                               */
 /* -------------------------------------------------------------------------- */
 
 /** Board card categories. `note` is plain text; the rest render `data`. */
@@ -165,7 +165,7 @@ export const updateMemorySchema = z
 export type UpdateMemoryInput = z.infer<typeof updateMemorySchema>;
 
 /* -------------------------------------------------------------------------- */
-/*                            Preferences (Jules+)                            */
+/*                            Preferences (Jules DeepDive)                            */
 /* -------------------------------------------------------------------------- */
 
 export const updatePreferencesSchema = z

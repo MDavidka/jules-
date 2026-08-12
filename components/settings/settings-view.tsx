@@ -253,7 +253,7 @@ export function SettingsView() {
           <DialogHeader>
             <DialogTitle>Delete the stored API key?</DialogTitle>
             <DialogDescription>
-              Jules+ will stop polling immediately and return to the setup screen. You can paste the
+              Jules DeepDive will stop polling immediately and return to the setup screen. You can paste the
               key again at any time.
             </DialogDescription>
           </DialogHeader>

@@ -108,7 +108,7 @@ export function SetupGate({ onConfigured }: SetupGateProps) {
         <div className="flex flex-col items-center text-center">
           <BrandMark className="h-14 w-14" iconClassName="h-8 w-8" />
           <h1 className="mt-5 text-2xl font-bold tracking-tight text-foreground">
-            Welcome to Jules+
+            Welcome to Jules DeepDive
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             Connect your Google Jules account to start delegating real coding tasks.
@@ -219,7 +219,7 @@ export function SetupGate({ onConfigured }: SetupGateProps) {
         <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-muted-foreground">
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>
-            Jules+ talks to Jules only from the server. Your key never reaches the browser,
+            Jules DeepDive talks to Jules only from the server. Your key never reaches the browser,
             localStorage, or logs.
           </span>
         </p>
