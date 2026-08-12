@@ -1,273 +1,204 @@
 "use client";
 
-import {
-  ArrowLeft,
-  Check,
-  ExternalLink,
-  GitBranch,
-  GitPullRequest,
-  LoaderCircle,
-  Send,
-  Workflow,
-} from "lucide-react";
+import { Check, LoaderCircle, Zap } from "lucide-react";
 import * as React from "react";
 
-import { ActivityItem } from "@/components/sessions/activity-item";
-import { Badge } from "@/components/ui/badge";
+import { SessionStepRow } from "@/components/sessions/session-step-row";
+import { TaskComposer } from "@/components/sessions/task-composer";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
-import {
-  POLL_INTERVALS,
-  useActivities,
-  useApprovePlan,
-  useSendMessage,
-  useSession,
-} from "@/hooks/use-sessions";
-import {
-  cn,
-  errorMessage,
-  formatAbsoluteTime,
-  sessionStateClasses,
-  sessionStateLabel,
-} from "@/lib/utils";
+import { useActivities, useApprovePlan, useSendMessage, useSession } from "@/hooks/use-sessions";
+import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
+import { buildSessionSteps, liveStep } from "@/lib/session-steps";
+import { errorMessage, formatAbsoluteTime, sessionStateLabel } from "@/lib/utils";
 
 interface SessionDetailViewProps {
   sessionName: string;
   enabled: boolean;
-  onBack: () => void;
 }
 
-export function SessionDetailView({ sessionName, enabled, onBack }: SessionDetailViewProps) {
+/**
+ * Session view: a compact header, the request, then one uniform row per agentic
+ * step in chronological order. The newest step always sits at the bottom, right
+ * above the composer.
+ */
+export function SessionDetailView({ sessionName, enabled }: SessionDetailViewProps) {
   const { toast } = useToast();
-  const [reply, setReply] = React.useState("");
 
   const sessionQuery = useSession(sessionName, { enabled });
   const session = sessionQuery.data ?? null;
 
-  const isSessionActive = session
-    ? session.isActive || session.activity === "waiting"
-    : true;
+  const isSessionActive = session ? session.isActive || session.activity === "waiting" : true;
 
   const activitiesQuery = useActivities(sessionName, { enabled, isSessionActive });
   const approvePlan = useApprovePlan(sessionName);
   const sendMessage = useSendMessage(sessionName);
 
-  const activities = activitiesQuery.data?.items ?? [];
+  const steps = React.useMemo(
+    () => buildSessionSteps(activitiesQuery.data?.items ?? []),
+    [activitiesQuery.data],
+  );
+
+  const current = session
+    ? liveStep(session, steps[steps.length - 1]?.label ?? null)
+    : null;
+
+  // The newest step must stay visible as the timeline grows.
+  const bottomRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [steps.length, current?.label]);
 
   const handleApprove = async () => {
     try {
       await approvePlan.mutateAsync();
-      toast({ title: "Plan approved", description: "Jules is starting the work.", variant: "success" });
+      toast({ title: "Task accepted", description: "Jules is starting the work.", variant: "success" });
     } catch (error) {
-      toast({
-        title: "Could not approve the plan",
-        description: errorMessage(error),
-        variant: "error",
-      });
+      toast({ title: "Could not accept the task", description: errorMessage(error), variant: "error" });
     }
   };
 
-  const handleSend = async () => {
-    const trimmed = reply.trim();
+  const handleSend = async (message: string) => {
+    const trimmed = message.trim();
     if (!trimmed) return;
 
     try {
       await sendMessage.mutateAsync(trimmed);
-      setReply("");
       toast({ title: "Message sent", variant: "success" });
     } catch (error) {
       toast({ title: "Could not send message", description: errorMessage(error), variant: "error" });
+      throw error;
     }
   };
 
-  return (
-    <div className="space-y-4">
-      <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
-        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        All tasks
-      </Button>
+  if (sessionQuery.isPending) {
+    return (
+      <div className="space-y-3 pb-44">
+        <Skeleton className="h-5 w-2/3" />
+        <Skeleton className="h-3 w-1/2" />
+        <Skeleton className="ml-auto h-24 w-[80%] rounded-2xl" />
+        <Skeleton className="h-4 w-1/3" />
+      </div>
+    );
+  }
 
-      {/* Header */}
-      {sessionQuery.isPending ? (
-        <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-4">
-          <Skeleton className="h-5 w-2/3" />
-          <Skeleton className="h-5 w-28 rounded-full" />
-          <Skeleton className="h-3 w-1/2" />
-        </div>
-      ) : sessionQuery.isError ? (
+  if (sessionQuery.isError) {
+    return (
+      <div className="pb-44">
         <ErrorState
-          title="Could not load this task"
+          title="Could not load this session"
           message={errorMessage(sessionQuery.error)}
           onRetry={() => void sessionQuery.refetch()}
           isRetrying={sessionQuery.isFetching}
         />
-      ) : session ? (
-        <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-4">
-          <h2 className="text-base font-semibold leading-snug text-foreground break-anywhere">
+      </div>
+    );
+  }
+
+  if (!session) return null;
+
+  return (
+    <div className="pb-44">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <h2 className="line-clamp-2 text-[15px] font-semibold leading-snug text-foreground break-anywhere">
             {session.title}
           </h2>
-
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge className={cn("gap-1.5 border", sessionStateClasses(session.state))}>
-              {session.isActive ? (
-                <LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />
-              ) : null}
-              {sessionStateLabel(session.state)}
-            </Badge>
-            {session.sourceFullName ? (
-              <Badge variant="outline" className="border-border/80">
-                {session.sourceFullName}
-              </Badge>
-            ) : null}
-            {session.branch ? (
-              <Badge variant="outline" className="gap-1 border-border/80">
-                <GitBranch className="h-3 w-3" aria-hidden="true" />
-                {session.branch}
-              </Badge>
-            ) : null}
-          </div>
-
           <p className="text-xs text-muted-foreground">
             Created {formatAbsoluteTime(session.createTime)} · updated{" "}
             {formatAbsoluteTime(session.updateTime)}
           </p>
+        </div>
 
-          {session.prompt ? (
-            <p className="whitespace-pre-wrap rounded-xl border border-border/60 bg-black/25 p-3 text-sm leading-relaxed text-muted-foreground break-anywhere">
-              {session.prompt}
-            </p>
-          ) : null}
+        {session.pullRequestUrl ? (
+          <a
+            href={session.pullRequestUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={
+              session.pullRequestTitle
+                ? `View pull request: ${session.pullRequestTitle}`
+                : "View pull request"
+            }
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+            PR
+          </a>
+        ) : null}
+      </header>
 
-          <div className="flex flex-wrap gap-2">
-            {session.pullRequestUrl ? (
-              <Button size="sm" variant="outline" asChild>
-                <a href={session.pullRequestUrl} target="_blank" rel="noopener noreferrer">
-                  <GitPullRequest className="h-4 w-4" aria-hidden="true" />
-                  View pull request
-                  <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
-                </a>
-              </Button>
-            ) : null}
-            {session.julesUrl ? (
-              <Button size="sm" variant="ghost" asChild>
-                <a href={session.julesUrl} target="_blank" rel="noopener noreferrer">
-                  Open in Jules
-                  <ExternalLink className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
-                </a>
-              </Button>
-            ) : null}
+      {session.prompt ? (
+        <div className="mt-5 flex justify-end">
+          <div className="max-w-[88%] rounded-2xl bg-secondary px-3.5 py-2.5 text-[13px] leading-6 text-foreground">
+            <ExpandableText lines={4}>{session.prompt}</ExpandableText>
           </div>
-
-          {/* Plan approval gate */}
-          {session.requiresPlanApproval ? (
-            <div className="space-y-2.5 rounded-xl border border-amber-500/30 bg-amber-950/25 p-3.5">
-              <p className="text-sm font-medium text-amber-100">Plan needs your approval</p>
-              <p className="text-sm leading-relaxed text-amber-200/80">
-                Review the plan in the timeline below, then approve it so Jules can start coding.
-              </p>
-              <Button size="sm" onClick={() => void handleApprove()} disabled={approvePlan.isPending}>
-                {approvePlan.isPending ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Check className="h-4 w-4" aria-hidden="true" />
-                )}
-                {approvePlan.isPending ? "Approving…" : "Approve plan"}
-              </Button>
-            </div>
-          ) : null}
         </div>
       ) : null}
 
-      {/* Activity timeline */}
-      <section aria-label="Activity timeline" className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-foreground">Activity</h3>
-          <span className="text-xs text-muted-foreground">
-            {isSessionActive
-              ? `Live · every ${POLL_INTERVALS.ACTIVE_DETAIL_MS / 1000}s`
-              : `Every ${POLL_INTERVALS.IDLE_MS / 1000}s`}
-          </span>
-        </div>
-
-        {activitiesQuery.isPending ? (
-          <ul className="space-y-4" aria-busy="true">
-            {[0, 1, 2].map((index) => (
-              <li key={index} className="flex gap-3">
-                <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
-                <div className="flex-1 space-y-2">
-                  <Skeleton className="h-4 w-1/3" />
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-2/3" />
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : activitiesQuery.isError ? (
+      {activitiesQuery.isError ? (
+        <div className="mt-5">
           <ErrorState
             title="Could not load activity"
             message={errorMessage(activitiesQuery.error)}
             onRetry={() => void activitiesQuery.refetch()}
             isRetrying={activitiesQuery.isFetching}
           />
-        ) : activities.length === 0 ? (
-          <EmptyState
-            icon={Workflow}
-            title="No activity yet"
-            description="Jules has not reported anything for this task yet. This view updates automatically."
-          />
-        ) : (
-          <ul className="pl-0.5">
-            {activities.map((activity) => (
-              <ActivityItem key={activity.name || activity.id} activity={activity} />
-            ))}
-          </ul>
-        )}
+        </div>
+      ) : (
+        <ul className="mt-4">
+          {activitiesQuery.isPending ? (
+            <li className="py-2">
+              <Skeleton className="h-4 w-40" />
+            </li>
+          ) : (
+            steps.map((step) => <SessionStepRow key={step.id} step={step} />)
+          )}
+          {current ? <SessionStepRow key={current.label} step={current} /> : null}
+        </ul>
+      )}
 
-        <p aria-live="polite" className="sr-only">
-          {activities.length} activity entries. Current state:{" "}
-          {session ? sessionStateLabel(session.state) : "loading"}.
-        </p>
-      </section>
-
-      {/* Reply composer */}
-      <section aria-label="Send a message to Jules" className="space-y-2">
-        <label htmlFor="session-reply" className="text-sm font-medium text-foreground">
-          Send a message
-        </label>
-        <Textarea
-          id="session-reply"
-          value={reply}
-          onChange={(event) => setReply(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              void handleSend();
-            }
-          }}
-          rows={3}
-          placeholder="Give Jules more context, or answer its question…"
-          disabled={sendMessage.isPending}
-        />
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">Cmd/Ctrl + Enter to send</p>
+      {session.requiresPlanApproval ? (
+        <div className="mt-3">
           <Button
-            size="sm"
-            onClick={() => void handleSend()}
-            disabled={sendMessage.isPending || reply.trim().length === 0}
+            onClick={() => void handleApprove()}
+            disabled={approvePlan.isPending}
+            className="min-h-10 rounded-lg bg-emerald-500 px-4 text-sm font-semibold text-black hover:bg-emerald-400"
           >
-            {sendMessage.isPending ? (
+            {approvePlan.isPending ? (
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
-              <Send className="h-4 w-4" aria-hidden="true" />
+              <Check className="h-4 w-4" aria-hidden="true" />
             )}
-            {sendMessage.isPending ? "Sending…" : "Send"}
+            {approvePlan.isPending ? "Accepting..." : "Accept task"}
           </Button>
         </div>
-      </section>
+      ) : null}
+
+      <div ref={bottomRef} aria-hidden="true" className="h-1" />
+
+      <p aria-live="polite" className="sr-only">
+        {steps.length} steps. Current state: {sessionStateLabel(session.state)}.
+      </p>
+
+      <div className="fixed inset-x-0 bottom-0 z-30 px-3 pb-3 pt-3 pb-safe sm:px-6">
+        <div className="mx-auto w-full max-w-3xl">
+          <TaskComposer
+            source={null}
+            branch={session.branch}
+            onBranchChange={() => undefined}
+            model={DEFAULT_NVIDIA_MODEL_ID}
+            models={NVIDIA_MODELS}
+            onModelChange={() => undefined}
+            onSubmit={async (message) => handleSend(message)}
+            isSubmitting={sendMessage.isPending}
+            modelDisabled
+          />
+        </div>
+      </div>
     </div>
   );
 }

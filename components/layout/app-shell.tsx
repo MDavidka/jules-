@@ -3,10 +3,12 @@
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 import { useNvidiaModels } from "@/hooks/use-nvidia-models";
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import { AutomationsView } from "@/components/automations/automations-view";
-import { DashboardView } from "@/components/dashboard/dashboard-view";
+import { ChecksView } from "@/components/checks/checks-view";
+import { SessionsView } from "@/components/sessions/sessions-view";
 import { AppHeader } from "@/components/layout/app-header";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { VIEW_TITLES, type ViewId } from "@/components/layout/nav-items";
@@ -15,7 +17,9 @@ import { MemoryView } from "@/components/memory/memory-view";
 import { RepoPickerSheet } from "@/components/repositories/repo-picker-sheet";
 import { RepositoriesView } from "@/components/repositories/repositories-view";
 import { SessionDetailView } from "@/components/sessions/session-detail-view";
+import { JulesFixProposalCard, type JulesFixProposal } from "@/components/sessions/jules-fix-proposal-card";
 import { TaskComposer, type AgentAttachment } from "@/components/sessions/task-composer";
+import { AgentActivityIndicator, isAgentActivity, type AgentActivity } from "@/components/ui/dot-matrix-loader";
 import { MarkdownContent } from "@/components/ui/markdown-content";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
@@ -25,8 +29,8 @@ import { useJulesConfig } from "@/hooks/use-jules-config";
 import { useMemory } from "@/hooks/use-memory";
 import { useSessions } from "@/hooks/use-sessions";
 import { useSource, useSources } from "@/hooks/use-sources";
-import { ApiError } from "@/lib/api-client";
-import { errorMessage } from "@/lib/utils";
+import { ApiError, queryKeys } from "@/lib/api-client";
+import { cn, errorMessage } from "@/lib/utils";
 
 export function AppShell() {
   const configQuery = useJulesConfig();
@@ -57,7 +61,14 @@ export function AppShell() {
 
 const LAST_SELECTED_SOURCE_KEY = "jules-plus:last-selected-source";
 
+type AssistantMessage = {
+  role: "user" | "assistant";
+  content: string;
+  julesProposal?: JulesFixProposal;
+};
+
 function ConfiguredApp() {
+  const queryClient = useQueryClient();
 
   const [activeView, setActiveView] = React.useState<ViewId>("new-task");
   const [selectedSourceName, setSelectedSourceName] = React.useState<string | null>(null);
@@ -72,8 +83,9 @@ function ConfiguredApp() {
     const orderedModels = [defaultModel, ...liveModels, selectedModel].filter(Boolean);
     return [...new Map(orderedModels.map((item) => [item!.id, item!])).values()];
   }, [model, nvidiaModelsQuery.models]);
-  const [assistantMessages, setAssistantMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [assistantMessages, setAssistantMessages] = React.useState<AssistantMessage[]>([]);
   const [assistantPending, setAssistantPending] = React.useState(false);
+  const [assistantActivity, setAssistantActivity] = React.useState<AgentActivity>("thinking");
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
 
   const [navOpen, setNavOpen] = React.useState(false);
@@ -166,20 +178,36 @@ function ConfiguredApp() {
     setActiveView("session");
   };
 
-  const handleSubmitTask = async (prompt: string, attachments: AgentAttachment[]) => {
-    const memoryBlock = pinnedNotes.length > 0 ? `\nKnown memory:\n${pinnedNotes.map((note) => `- ${note.content}`).join("\n")}` : "";
+  const handleSubmitTask = async (
+    prompt: string,
+    attachments: AgentAttachment[],
+    researchRepositories: string[],
+  ) => {
+    const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
+    const displayPrompt = promptAttachment?.content?.trim() || prompt;
+    const memoryContext = pinnedNotes
+      .map((note) => {
+        const title = note.title?.trim() ? `${note.title.trim()}: ` : "";
+        const data = note.data && Object.keys(note.data).length > 0 ? ` Data: ${JSON.stringify(note.data)}` : "";
+        return `- ${title}${note.content.trim()}${data}`;
+      })
+      .join("\n");
     setAssistantPending(true);
-    setAssistantMessages((current) => [...current, { role: "user", content: prompt }, { role: "assistant", content: "" }]);
+    setAssistantActivity("thinking");
+    setAssistantMessages((current) => [...current, { role: "user", content: displayPrompt }, { role: "assistant", content: "" }]);
 
     try {
       const response = await fetch("/api/nvidia/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: `${prompt}${memoryBlock}`,
+          prompt,
           model: model || DEFAULT_NVIDIA_MODEL_ID,
-          source: selectedSource?.githubUrl ?? selectedSource?.fullName ?? selectedSourceName,
+          source: selectedSource?.name ?? selectedSourceName,
+          branch: branch ?? selectedSource?.defaultBranch ?? undefined,
+          memoryContext,
           attachments,
+          researchRepositories,
           history: assistantMessages,
         }),
       });
@@ -188,33 +216,88 @@ function ConfiguredApp() {
         throw new Error(data?.error ?? data?.message ?? "Assistant request failed.");
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let receivedContent = false;
-      while (true) {
-        const result = await reader.read();
-        if (result.done) break;
-        const token = decoder.decode(result.value, { stream: true });
-        if (!token) continue;
-        receivedContent = true;
+      const appendToken = (token: string) => {
         setAssistantMessages((current) => {
           const next = [...current];
           const last = next[next.length - 1];
           if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token };
           return next;
         });
+      };
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let receivedContent = false;
+      let savedMemoryCount = 0;
+      let streamError: string | null = null;
+
+      // The route streams newline-delimited JSON events, not raw text.
+      const handleEvent = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+
+        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown };
+        try {
+          event = JSON.parse(trimmed);
+        } catch {
+          return;
+        }
+
+        switch (event.type) {
+          case "status":
+            if (isAgentActivity(event.activity)) setAssistantActivity(event.activity);
+            break;
+          case "token":
+            if (typeof event.value === "string" && event.value) {
+              receivedContent = true;
+              appendToken(event.value);
+            }
+            break;
+          case "memory":
+            if (typeof event.saved === "number") savedMemoryCount += event.saved;
+            break;
+          case "jules_fix_proposal": {
+            const proposal = parseJulesFixProposal(event.proposal);
+            if (proposal) {
+              setAssistantMessages((current) => {
+                const next = [...current];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") next[next.length - 1] = { ...last, julesProposal: proposal };
+                return next;
+              });
+            }
+            break;
+          }
+          case "done":
+            setAssistantActivity("done");
+            break;
+          case "error":
+            streamError = typeof event.message === "string" ? event.message : "The assistant request failed.";
+            break;
+          default:
+            break;
+        }
+      };
+
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        buffer += decoder.decode(result.value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) handleEvent(line);
       }
-      const trailingToken = decoder.decode();
-      if (trailingToken) {
-        receivedContent = true;
-        setAssistantMessages((current) => {
-          const next = [...current];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + trailingToken };
-          return next;
-        });
-      }
+      buffer += decoder.decode();
+      if (buffer) handleEvent(buffer);
+
+      if (streamError) throw new Error(streamError);
       if (!receivedContent) throw new Error("The assistant returned an empty response. Try a smaller image or a different prompt.");
+
+      // Refresh the memory board when the assistant stored new cards.
+      if (savedMemoryCount > 0) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.memory });
+      }
     } catch (error) {
       setAssistantMessages((current) => {
         const next = [...current];
@@ -279,11 +362,14 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} composerHeight={composerHeight} />
+            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
           ) : (
-            <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10">
+            <div className={cn(
+              "mx-auto w-full flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10",
+              activeView === "dashboard" || activeView === "session" ? "max-w-5xl" : "max-w-3xl",
+            )}>
               {activeView === "dashboard" ? (
-                <DashboardView
+                <SessionsView
                   enabled
                   selectedSource={selectedSource}
                   onOpenSession={handleOpenSession}
@@ -300,13 +386,14 @@ function ConfiguredApp() {
                 <MemoryView selectedSource={selectedSourceName} />
               ) : activeView === "automations" ? (
                 <AutomationsView />
+              ) : activeView === "checks" ? (
+                <ChecksView selectedSource={selectedSource} />
               ) : activeView === "settings" ? (
                 <SettingsView />
               ) : activeView === "session" && openSessionName ? (
                 <SessionDetailView
                   sessionName={openSessionName}
                   enabled
-                  onBack={() => handleNavigate("dashboard")}
                 />
               ) : null}
             </div>
@@ -318,6 +405,7 @@ function ConfiguredApp() {
               <div className="mx-auto w-full max-w-3xl">
                 <TaskComposer
                   source={selectedSource}
+                  sources={sources}
                   branch={branch}
                   onBranchChange={setBranch}
                   model={model}
@@ -345,27 +433,70 @@ function ConfiguredApp() {
   );
 }
 
-/** The near-empty hero state from the reference design. */
-function NewTaskView({ messages, isStreaming, composerHeight }: { messages: Array<{ role: "user" | "assistant"; content: string }>; isStreaming: boolean; composerHeight: number }) {
+function NewTaskView({
+  messages,
+  isStreaming,
+  activity,
+  composerHeight,
+  onSessionCreated,
+}: {
+  messages: AssistantMessage[];
+  isStreaming: boolean;
+  activity: AgentActivity;
+  composerHeight: number;
+  onSessionCreated: (sessionName: string) => void;
+}) {
   return (
     <div
       className="flex flex-1 flex-col overflow-y-auto px-4 pb-[calc(var(--composer-height)+1.5rem)] pt-6 sm:px-6 lg:pb-10"
       style={{ "--composer-height": `${Math.max(composerHeight, 208)}px` } as React.CSSProperties}
     >
       {messages.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center text-center"><BrandMark className="h-12 w-12" iconClassName="h-7 w-7" /><p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">Tell the assistant what you are trying to build or fix. It will gather context and suggest the next action.</p></div>
+        <div className="flex flex-1 flex-col items-center justify-center text-center">
+          <BrandMark className="h-12 w-12" iconClassName="h-7 w-7" />
+          <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">
+            Tell the assistant what you are trying to build or fix. It will gather context and suggest the next action.
+          </p>
+        </div>
       ) : (
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
           {messages.map((message, index) => (
-            <div key={`${message.role}-${index}`} className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] px-5 py-3 text-base leading-relaxed text-foreground"}>
-              {message.role === "assistant" ? <MarkdownContent>{message.content}</MarkdownContent> : <p className="whitespace-pre-wrap">{message.content}</p>}
-              {message.role === "assistant" && index === messages.length - 1 && isStreaming ? <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-primary align-middle" aria-label="Assistant is typing" /> : null}
+            <div
+              key={`${message.role}-${index}`}
+              className={message.role === "user" ? "self-end max-w-[86%] rounded-3xl bg-secondary px-5 py-3 text-base text-foreground" : "max-w-[92%] px-5 py-3 text-base leading-relaxed text-foreground"}
+            >
+              {message.role === "assistant" ? (
+                <>
+                  {message.content ? <MarkdownContent>{message.content}</MarkdownContent> : null}
+                  {message.julesProposal ? (
+                    <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
+                  ) : null}
+                  {index === messages.length - 1 && isStreaming ? (
+                    <AgentActivityIndicator activity={activity} className="mt-3" />
+                  ) : null}
+                </>
+              ) : (
+                <p className="whitespace-pre-wrap">{message.content}</p>
+              )}
             </div>
           ))}
         </div>
       )}
     </div>
   );
+}
+
+function parseJulesFixProposal(value: unknown): JulesFixProposal | null {
+  if (!value || typeof value !== "object") return null;
+  const proposal = value as Record<string, unknown>;
+  if (typeof proposal.prompt !== "string" || typeof proposal.source !== "string" || typeof proposal.title !== "string") return null;
+  if (!proposal.source.startsWith("sources/github/")) return null;
+  return {
+    prompt: proposal.prompt,
+    source: proposal.source,
+    title: proposal.title,
+    ...(typeof proposal.branch === "string" && proposal.branch ? { branch: proposal.branch } : {}),
+  };
 }
 
 

@@ -1,13 +1,11 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-type Heading = { level: number; text: string; id: string };
 type Block =
-  | { kind: "heading"; level: number; text: string; id: string }
+  | { kind: "heading"; level: number; text: string }
   | { kind: "paragraph"; lines: string[] }
   | { kind: "list"; ordered: boolean; items: string[] }
   | { kind: "quote"; lines: string[] }
@@ -27,39 +25,13 @@ interface MarkdownContentProps {
  */
 export function MarkdownContent({ children, className }: MarkdownContentProps) {
   const parsed = React.useMemo(() => parseMarkdown(children), [children]);
-  const headings = parsed.blocks.filter(
-    (block): block is Extract<Block, { kind: "heading" }> => block.kind === "heading",
-  );
 
   return (
     <div className={cn("space-y-4 text-[15px] leading-7 text-foreground", className)}>
-      {headings.length > 0 ? <TableOfContents headings={headings} /> : null}
       {parsed.blocks.map((block, index) => (
         <MarkdownBlock key={`${block.kind}-${index}`} block={block} />
       ))}
     </div>
-  );
-}
-
-function TableOfContents({ headings }: { headings: Heading[] }) {
-  return (
-    <details className="group rounded-2xl border border-border/70 bg-card/70 px-4 py-3" open={headings.length <= 4}>
-      <summary className="cursor-pointer list-none text-sm font-bold text-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-        <ChevronRight className="mr-2 inline-block h-4 w-4 text-primary transition-transform group-open:rotate-90" aria-hidden="true" />
-        Table of contents
-      </summary>
-      <nav aria-label="Table of contents" className="mt-2 border-l border-border/80 pl-3">
-        <ol className="space-y-1 text-sm leading-6">
-          {headings.map((heading) => (
-            <li key={heading.id} className={cn(heading.level > 1 && "pl-3")}>
-              <a className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline" href={`#${heading.id}`}>
-                {renderInline(heading.text, `toc-${heading.id}`)}
-              </a>
-            </li>
-          ))}
-        </ol>
-      </nav>
-    </details>
   );
 }
 
@@ -68,8 +40,8 @@ function MarkdownBlock({ block }: { block: Block }) {
     case "heading": {
       const Tag = `h${block.level}` as React.ElementType;
       return (
-        <Tag id={block.id} className={cn("scroll-mt-6 font-bold tracking-tight text-foreground", block.level === 1 ? "text-2xl" : block.level === 2 ? "text-xl" : "text-lg")}>
-          {renderInline(block.text, block.id)}
+        <Tag className={cn("font-bold tracking-tight text-foreground", block.level === 1 ? "text-2xl" : block.level === 2 ? "text-xl" : "text-lg")}>
+          {renderInline(block.text, `heading-${block.level}`)}
         </Tag>
       );
     }
@@ -111,7 +83,6 @@ function MarkdownBlock({ block }: { block: Block }) {
 function parseMarkdown(source: string): { blocks: Block[] } {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
-  const usedIds = new Map<string, number>();
   let index = 0;
 
   while (index < lines.length) {
@@ -131,10 +102,7 @@ function parseMarkdown(source: string): { blocks: Block[] } {
     const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (heading) {
       const text = heading[2]!.trim();
-      const base = slugify(text) || "section";
-      const count = usedIds.get(base) ?? 0;
-      usedIds.set(base, count + 1);
-      blocks.push({ kind: "heading", level: heading[1]!.length, text, id: count ? `${base}-${count + 1}` : base });
+      blocks.push({ kind: "heading", level: heading[1]!.length, text });
       index += 1;
       continue;
     }
@@ -188,10 +156,6 @@ function isTableSeparator(line?: string) {
 
 function splitTableRow(line: string) {
   return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
-}
-
-function slugify(value: string) {
-  return value.replace(/[`*_~]/g, "").toLowerCase().trim().replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/[\s-]+/g, "-");
 }
 
 function renderInline(value: string, keyPrefix: string): React.ReactNode[] {

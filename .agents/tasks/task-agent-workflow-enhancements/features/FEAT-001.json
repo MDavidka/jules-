@@ -1,0 +1,36 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "GitHub App OAuth Connect button + memory board pinch-to-zoom + detailed activity labels + rate limiting with retry",
+  "status": "completed",
+  "steps": [
+    "1. Add GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET to .env.example with docs. Add GITHUB_APP_REDIRECT_URI env var.",
+    "2. Create app/api/github/connect/route.ts - GET handler that redirects to GitHub OAuth authorize URL (https://github.com/login/oauth/authorize) with client_id from env GITHUB_APP_CLIENT_ID, redirect_uri from env GITHUB_APP_REDIRECT_URI, scope 'repo'. This is the 'Connect to GitHub' button target.",
+    "3. Create app/api/github/callback/route.ts - GET handler that exchanges code for access_token via POST to https://github.com/login/oauth/access_token with client_id, client_secret, code. Store the token in MongoDB (add githubAccessToken field to AppProfile schema in lib/mongodb.server.ts). Redirect to APP_URL or '/' with success query param.",
+    "4. Create a 'Connect to GitHub' button component at components/settings/github-connect-button.tsx. It should be a clean shadcn-style button that links to /api/github/connect. Show connected state when token exists (add GET /api/github/status route that checks if githubAccessToken is stored).",
+    "5. Add the GitHub connect button to SettingsView so users can connect their GitHub account for MCP/agent access.",
+    "6. In components/memory/memory-board.tsx: Remove the entire zoom controls box (the absolute positioned div with +/- buttons and percentage). Remove the zoom state and all zoom handlers. Make the board a fixed-size scrollable container. Add CSS touch-action: pinch-zoom and implement native pinch-to-zoom using CSS transform with a touch gesture handler (useRef for the container, track two-finger touch events to calculate scale). The board should start at scale 1 and users pinch to zoom without any visible buttons.",
+    "7. In lib/agent-activity.ts: Change ACTIVITY_LABELS to more descriptive labels - thinking -> 'analyzing your request..', reading -> 'reading documentation..', searching -> 'searching the web..', inspecting -> 'understanding the repository..', saving -> 'saving to memory..', working -> 'composing response..', done -> 'done'. These labels give users better visibility into what the agent is doing.",
+    "8. In lib/agent-research.server.ts: Add rate limiting logic. Create a simple token bucket or request counter that tracks requests per minute. Before each fetch to NVIDIA_CHAT_COMPLETIONS_URL, check if we are approaching 20 req/min limit. If at limit, add a delay (exponential backoff starting at 3 seconds). Add retry logic (max 3 retries) on 429 status responses from the NVIDIA API. Export a rateLimitedFetch helper that wraps fetch with this logic.",
+    "9. In app/api/nvidia/chat/route.ts: Use the rate-limited fetch for the main NVIDIA API call. If rate limited, emit a status event like 'waiting' or add a new activity 'waiting' to agent-activity.ts with label 'rate limited, retrying soon..' so the user sees what is happening."
+  ],
+  "acceptance_criteria": [
+    "GET /api/github/connect redirects to GitHub OAuth with correct params",
+    "GET /api/github/callback exchanges code for token and stores in DB",
+    "GET /api/github/status returns { connected: boolean }",
+    "GitHub connect button renders in settings and shows connect/connected state",
+    ".env.example documents GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET, GITHUB_APP_REDIRECT_URI",
+    "Memory board has no visible zoom buttons - only pinch-to-zoom via touch gestures",
+    "Memory board is a fixed-size scrollable container",
+    "Activity labels are more descriptive (e.g. 'understanding the repository..' instead of 'reading the repo..')",
+    "Rate limiting prevents exceeding 20 req/min to NVIDIA API with automatic retry on 429",
+    "typecheck passes, lint passes, build succeeds"
+  ],
+  "verification": [
+    "source /root/.nvm/nvm.sh && nvm use 22 >/dev/null && npm run typecheck",
+    "source /root/.nvm/nvm.sh && nvm use 22 >/dev/null && npm run lint",
+    "source /root/.nvm/nvm.sh && nvm use 22 >/dev/null && npm run build"
+  ],
+  "blocked_reason": null,
+  "findings": "All acceptance criteria met. Typecheck, lint, and build pass cleanly. The GitHub OAuth redirect URI should be set to APP_URL + /api/github/callback (e.g. http://localhost:3000/api/github/callback). Rate limiter uses in-memory token bucket shared across requests in the same server process. v2 review fix: waitForToken now loops until a token is genuinely available instead of proceeding without one after a single sleep. OAuth scope documented with rationale for repo being intentional."
+}

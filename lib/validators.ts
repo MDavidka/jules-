@@ -67,6 +67,10 @@ export const listActivitiesQuerySchema = paginationSchema;
 
 export const PROMPT_MIN_LENGTH = 1;
 export const PROMPT_MAX_LENGTH = 10_000;
+/** Maximum number of additional repositories selectable from the composer. */
+export const MAX_RESEARCH_REPOSITORIES = 4;
+/** Includes the primary repository plus explicit research targets. */
+export const MAX_REPOSITORY_TARGETS = MAX_RESEARCH_REPOSITORIES + 1;
 
 export const createSessionSchema = z.object({
   prompt: z
@@ -89,6 +93,19 @@ export const createSessionSchema = z.object({
 
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 
+/* -------------------------------------------------------------------------- */
+/*                              Repository checks                             */
+/* -------------------------------------------------------------------------- */
+
+export const CHECK_COMMANDS = ["test", "typecheck", "lint", "build"] as const;
+
+export const checkCommandSchema = z.object({
+  command: z.enum(CHECK_COMMANDS),
+  source: sourceResourceNameSchema,
+});
+
+export type CheckCommandInput = z.infer<typeof checkCommandSchema>;
+
 export const sendMessageSchema = z.object({
   prompt: z
     .string({ required_error: "Type a message to send." })
@@ -103,6 +120,20 @@ export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 /*                              Memory (Jules DeepDive)                               */
 /* -------------------------------------------------------------------------- */
 
+/** Board card categories. `note` is plain text; the rest render `data`. */
+export const MEMORY_KINDS = ["note", "stack", "connection", "code", "config"] as const;
+
+export type MemoryKind = (typeof MEMORY_KINDS)[number];
+
+/**
+ * Structured payload written by the assistant, e.g.
+ * `{ framework: "next", startScript: "pnpm dev" }`. Values are limited to
+ * primitives and string lists so the board can always render them.
+ */
+export const memoryDataSchema = z.record(
+  z.union([z.string().max(2000), z.number(), z.boolean(), z.null(), z.array(z.string().max(500)).max(20)]),
+);
+
 export const createMemorySchema = z.object({
   content: z
     .string({ required_error: "Write something to remember." })
@@ -111,9 +142,27 @@ export const createMemorySchema = z.object({
     .max(4000, "Keep memory entries under 4,000 characters."),
   source: sourceResourceNameSchema.optional(),
   pinned: z.boolean().optional().default(true),
+  title: z.string().trim().max(120, "Keep titles under 120 characters.").optional(),
+  kind: z.enum(MEMORY_KINDS).optional(),
+  data: memoryDataSchema.optional(),
+  connections: z.array(z.string().trim().min(1)).max(20).optional(),
 });
 
 export type CreateMemoryInput = z.infer<typeof createMemorySchema>;
+
+export const updateMemorySchema = z
+  .object({
+    pinned: z.boolean().optional(),
+    title: z.string().trim().max(120).optional(),
+    kind: z.enum(MEMORY_KINDS).optional(),
+    data: memoryDataSchema.optional(),
+    connections: z.array(z.string().trim().min(1)).max(20).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Provide at least one field to update.",
+  });
+
+export type UpdateMemoryInput = z.infer<typeof updateMemorySchema>;
 
 /* -------------------------------------------------------------------------- */
 /*                            Preferences (Jules DeepDive)                            */

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowUp, FileImage, FileText, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Check, FileImage, FileText, Github, LoaderCircle, Mic, Paperclip, Search, X } from "lucide-react";
 import type { NvidiaModel } from "@/hooks/use-nvidia-models";
 import * as React from "react";
 
@@ -16,8 +16,10 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { useSpeechDictation } from "@/hooks/use-speech-dictation";
 import { cn, errorMessage } from "@/lib/utils";
-import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from "@/lib/validators";
+import { MAX_RESEARCH_REPOSITORIES, PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH } from "@/lib/validators";
 import type { NormalizedSource } from "@/types/jules";
+
+export const LONG_PROMPT_FILE_THRESHOLD = 4_000;
 
 export interface AgentAttachment {
   id: string;
@@ -26,20 +28,24 @@ export interface AgentAttachment {
   size: number;
   content?: string;
   dataUrl?: string;
+  /** Marks the generated text file that contains the complete user request. */
+  isPromptAttachment?: boolean;
   status?: "processing" | "ready" | "error";
   error?: string;
 }
 
 interface TaskComposerProps {
   source: NormalizedSource | null;
+  sources?: NormalizedSource[];
   branch: string | null;
   onBranchChange: (branch: string) => void;
   model: string;
   models: readonly NvidiaModel[];
   onModelChange: (model: string) => void;
-  onSubmit: (prompt: string, attachments: AgentAttachment[]) => Promise<void>;
+  onSubmit: (prompt: string, attachments: AgentAttachment[], researchRepositories: string[]) => Promise<void>;
   isSubmitting: boolean;
   disabled?: boolean;
+  modelDisabled?: boolean;
 }
 
 /**
@@ -48,6 +54,7 @@ interface TaskComposerProps {
  */
 export function TaskComposer({
   source,
+  sources,
   branch,
   onBranchChange,
   model,
@@ -56,13 +63,18 @@ export function TaskComposer({
   onSubmit,
   isSubmitting,
   disabled = false,
+  modelDisabled = false,
 }: TaskComposerProps) {
   const [prompt, setPrompt] = React.useState("");
   const [attachments, setAttachments] = React.useState<AgentAttachment[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | null>(null);
+  const [showGithubDropdown, setShowGithubDropdown] = React.useState(false);
+  const [githubSearch, setGithubSearch] = React.useState("");
+  const [selectedResearchRepositories, setSelectedResearchRepositories] = React.useState<string[]>([]);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   const dictation = useSpeechDictation({
@@ -80,6 +92,90 @@ export function TaskComposer({
     element.style.height = "auto";
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
   }, [prompt]);
+
+  const availableGithubSources = React.useMemo(() => {
+    const seen = new Set<string>();
+    return (sources ?? []).filter((sourceItem) => {
+      const key = sourceItem.fullName.trim().toLowerCase() || sourceItem.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [sources]);
+
+  // Detect /github trigger and manage dropdown visibility.
+  React.useEffect(() => {
+    if (!sources?.length) {
+      setShowGithubDropdown(false);
+      return;
+    }
+    // Keep the picker open while the trigger remains at the end of the draft,
+    // so several repositories can be selected before the user confirms.
+    setShowGithubDropdown(/\/github\s*$/.test(prompt));
+  }, [prompt, sources]);
+
+  // Remove selections that disappear after a source refresh.
+  React.useEffect(() => {
+    const available = new Set((availableGithubSources).map((sourceItem) => sourceItem.name));
+    setSelectedResearchRepositories((current) => current.filter((name) => available.has(name)));
+  }, [availableGithubSources]);
+
+  // Close dropdown on escape or click outside.
+  React.useEffect(() => {
+    if (!showGithubDropdown) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowGithubDropdown(false);
+        setGithubSearch("");
+      }
+    };
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowGithubDropdown(false);
+        setGithubSearch("");
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showGithubDropdown]);
+
+  const filteredGithubSources = React.useMemo(() => {
+    const term = githubSearch.trim().toLowerCase();
+    if (!term) return availableGithubSources;
+    return (availableGithubSources).filter((sourceItem) =>
+      `${sourceItem.fullName} ${sourceItem.owner ?? ""} ${sourceItem.repo ?? ""}`.toLowerCase().includes(term),
+    );
+  }, [githubSearch, availableGithubSources]);
+
+  const toggleResearchRepository = (sourceName: string) => {
+    setSelectedResearchRepositories((current) => {
+      if (current.includes(sourceName)) return current.filter((name) => name !== sourceName);
+      if (current.length >= MAX_RESEARCH_REPOSITORIES) return current;
+      return [...current, sourceName];
+    });
+  };
+
+  const completeGithubSelection = () => {
+    const selectedNames = new Set(selectedResearchRepositories);
+    const references = (availableGithubSources)
+      .filter((sourceItem) => selectedNames.has(sourceItem.name))
+      .map((sourceItem) => `@${sourceItem.fullName}`)
+      .join(" ");
+
+    setPrompt((current) => current.replace(/\/github\s*$/, references ? `${references} ` : ""));
+    setShowGithubDropdown(false);
+    setGithubSearch("");
+    textareaRef.current?.focus();
+  };
+
+  const clearGithubSelection = () => setSelectedResearchRepositories([]);
 
   const branches = source?.branches ?? [];
   const effectiveBranch = branch ?? source?.defaultBranch ?? null;
@@ -206,9 +302,30 @@ export function TaskComposer({
     }
 
     try {
-      await onSubmit(prompt.trim(), attachments.filter((attachment) => attachment.status !== "error"));
+      const trimmedPrompt = prompt.trim();
+      const promptAttachment: AgentAttachment | null = trimmedPrompt.length >= LONG_PROMPT_FILE_THRESHOLD
+        ? {
+            id: `prompt-${Date.now()}`,
+            name: "user-request.md",
+            type: "text/markdown",
+            size: new Blob([trimmedPrompt]).size,
+            content: trimmedPrompt,
+            isPromptAttachment: true,
+            status: "ready",
+          }
+        : null;
+      const submittedPrompt = promptAttachment
+        ? `Please read the attached file "${promptAttachment.name}" for my complete request, then answer or act on it.`
+        : trimmedPrompt;
+      const submittedAttachments = promptAttachment
+        ? [promptAttachment, ...attachments.filter((attachment) => attachment.status !== "error")]
+        : attachments.filter((attachment) => attachment.status !== "error");
+
+      await onSubmit(submittedPrompt, submittedAttachments, selectedResearchRepositories);
       setPrompt("");
       setAttachments([]);
+      setSelectedResearchRepositories([]);
+      setGithubSearch("");
       setValidationError(null);
     } catch (error) {
       setValidationError(errorMessage(error, "Could not submit the task."));
@@ -274,20 +391,143 @@ export function TaskComposer({
         <label htmlFor="task-prompt" className="sr-only">
           Describe the task for Jules
         </label>
-        <textarea
-          id="task-prompt"
-          ref={textareaRef}
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-          disabled={disabled || isSubmitting}
-          maxLength={PROMPT_MAX_LENGTH + 100}
-          aria-invalid={Boolean(validationError)}
-          aria-describedby="task-prompt-help"
-          placeholder="Describe what you want to build, debug, or understand."
-          className="max-h-[160px] w-full resize-none bg-transparent px-2 pb-2 pt-1 text-lg leading-relaxed text-foreground outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 disabled:cursor-not-allowed sm:max-h-[200px] sm:px-2.5 sm:pb-3 sm:pt-1.5 sm:text-2xl"
-        />
+        <div className="relative">
+          <textarea
+            id="task-prompt"
+            ref={textareaRef}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={2}
+            disabled={disabled || isSubmitting}
+            maxLength={PROMPT_MAX_LENGTH + 100}
+            aria-invalid={Boolean(validationError)}
+            aria-describedby="task-prompt-help"
+            placeholder="Describe what you want to build, debug, or understand."
+            className="max-h-[160px] w-full resize-none bg-transparent px-2 pb-2 pt-1 text-lg leading-relaxed text-foreground outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 disabled:cursor-not-allowed sm:max-h-[200px] sm:px-2.5 sm:pb-3 sm:pt-1.5 sm:text-2xl"
+          />
+
+          {/* /github multi-repository research picker */}
+          {showGithubDropdown && sources && sources.length > 0 ? (
+            <div
+              ref={dropdownRef}
+              role="dialog"
+              aria-label="Choose repositories to research"
+              className="absolute bottom-full left-0 z-50 mb-2 w-[min(25rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-white/15 bg-[hsl(0_0%_10%)] p-3 shadow-2xl shadow-black/50"
+            >
+              <div className="mb-2 flex items-center gap-2 px-1">
+                <Github className="h-4 w-4 shrink-0 text-foreground" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Research repositories</p>
+                  <p className="truncate text-[11px] text-muted-foreground">The agent will compare selected codebases.</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {selectedResearchRepositories.length}/{MAX_RESEARCH_REPOSITORIES}
+                </span>
+              </div>
+
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                <input
+                  id="github-repository-search"
+                  type="search"
+                  value={githubSearch}
+                  onChange={(event) => setGithubSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      dropdownRef.current?.querySelector<HTMLButtonElement>("[data-repo-option]")?.focus();
+                    }
+                    if (event.key === "Enter" && filteredGithubSources.length === 1) {
+                      event.preventDefault();
+                      toggleResearchRepository(filteredGithubSources[0]!.name);
+                    }
+                  }}
+                  placeholder="Search for repo"
+                  aria-label="Search repositories"
+                  aria-controls="github-repository-options"
+                  className="h-12 w-full rounded-xl border border-transparent bg-white/[0.09] pl-10 pr-3 text-base text-foreground outline-none placeholder:text-muted-foreground/80 focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+                  autoFocus
+                />
+              </div>
+
+              <div className="mt-2 max-h-52 overflow-y-auto" id="github-repository-options">
+                {filteredGithubSources.length > 0 ? (
+                  <ul role="listbox" aria-label="Repositories" aria-multiselectable="true" className="space-y-0.5">
+                    {filteredGithubSources.map((sourceItem) => {
+                      const isSelected = selectedResearchRepositories.includes(sourceItem.name);
+                      const atLimit = selectedResearchRepositories.length >= MAX_RESEARCH_REPOSITORIES;
+
+                      return (
+                        <li key={sourceItem.name}>
+                          <button
+                            type="button"
+                            data-repo-option
+                            role="option"
+                            aria-selected={isSelected}
+                            disabled={atLimit && !isSelected}
+                            onClick={() => toggleResearchRepository(sourceItem.name)}
+                            className={cn(
+                              "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70",
+                              isSelected ? "bg-primary/15 text-foreground" : "text-foreground hover:bg-white/[0.07]",
+                              atLimit && !isSelected && "cursor-not-allowed opacity-40",
+                            )}
+                          >
+                            <Github className="h-4 w-4 shrink-0 text-foreground" aria-hidden="true" />
+                            <span className="min-w-0 flex-1 truncate text-sm">{sourceItem.fullName}</span>
+                            {sourceItem.isPrivate ? <span className="text-[10px] text-muted-foreground">private</span> : null}
+                            {isSelected ? <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" /> : null}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="px-3 py-5 text-center text-xs text-muted-foreground">No matching repositories.</p>
+                )}
+              </div>
+
+              {selectedResearchRepositories.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1.5 border-t border-white/10 pt-2" aria-label="Selected repositories">
+                  {(availableGithubSources)
+                    .filter((sourceItem) => selectedResearchRepositories.includes(sourceItem.name))
+                    .map((sourceItem) => (
+                      <span key={sourceItem.name} className="inline-flex max-w-full items-center gap-1 rounded-full bg-primary/15 px-2 py-1 text-[11px] text-foreground">
+                        <Github className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        <span className="max-w-[10rem] truncate">{sourceItem.fullName}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleResearchRepository(sourceItem.name)}
+                          className="rounded-full p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                          aria-label={`Remove ${sourceItem.fullName}`}
+                        >
+                          <X className="h-3 w-3" aria-hidden="true" />
+                        </button>
+                      </span>
+                    ))}
+                </div>
+              ) : null}
+
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+                <button
+                  type="button"
+                  onClick={clearGithubSelection}
+                  disabled={selectedResearchRepositories.length === 0}
+                  className="rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={completeGithubSelection}
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <input
           ref={fileInputRef}
@@ -310,7 +550,7 @@ export function TaskComposer({
             <span className="sr-only">Attach files or images</span>
           </button>
 
-          <Select value={model} onValueChange={onModelChange} disabled={disabled}>
+          <Select value={model} onValueChange={onModelChange} disabled={disabled || modelDisabled}>
             <SelectTrigger aria-label="Model" className="h-10 min-h-10 w-auto max-w-[13rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
               {selectedModel ? <ModelIcon model={selectedModel} /> : null}
               <SelectValue placeholder="Select model" />

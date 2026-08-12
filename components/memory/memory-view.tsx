@@ -5,6 +5,7 @@ import { BrainCircuit, LoaderCircle, Pin, PinOff, Plus, Trash2 } from "lucide-re
 import * as React from "react";
 import { useForm } from "react-hook-form";
 
+import { MemoryBoard } from "@/components/memory/memory-board";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
@@ -18,7 +19,7 @@ import {
   useToggleMemoryPin,
 } from "@/hooks/use-memory";
 import { createMemorySchema, type CreateMemoryInput } from "@/lib/validators";
-import { errorMessage, formatRelativeTime, sourceDisplayName } from "@/lib/utils";
+import { cn, errorMessage, formatRelativeTime, sourceDisplayName } from "@/lib/utils";
 
 interface MemoryViewProps {
   /** When set, new notes are scoped to this repository. */
@@ -48,6 +49,15 @@ export function MemoryView({ selectedSource }: MemoryViewProps) {
   });
 
   const notes = memoryQuery.data?.items ?? [];
+  const [focusedNoteId, setFocusedNoteId] = React.useState<string | null>(null);
+
+  // Selecting a board card scrolls its row into view and highlights it.
+  React.useEffect(() => {
+    if (!focusedNoteId) return;
+    document
+      .getElementById(`memory-note-${focusedNoteId}`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focusedNoteId]);
 
   const onSubmit = handleSubmit(async (values) => {
     try {
@@ -65,13 +75,16 @@ export function MemoryView({ selectedSource }: MemoryViewProps) {
 
   return (
     <div className="space-y-5">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">Memory</h2>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          Reusable context stored in your own database. Pinned notes are attached to the prompt when
-          you start a new task.
-        </p>
-      </div>
+      {memoryQuery.isPending ? (
+        <Skeleton className="h-52 rounded-3xl" />
+      ) : (
+        <MemoryBoard notes={notes} onSelectNote={setFocusedNoteId} />
+      )}
+
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        Reusable context stored in your own database. Pinned notes are attached to the prompt when
+        you start a new task.
+      </p>
 
       <form onSubmit={onSubmit} className="space-y-2" noValidate>
         <label htmlFor="memory-content" className="text-sm font-medium text-foreground">
@@ -133,12 +146,26 @@ export function MemoryView({ selectedSource }: MemoryViewProps) {
             {notes.map((note) => (
               <li
                 key={note.id}
-                className="flex items-start gap-2 rounded-2xl border border-border/70 bg-card p-3.5"
+                id={`memory-note-${note.id}`}
+                className={cn(
+                  "flex items-start gap-2 rounded-2xl border bg-card p-3.5 transition-colors",
+                  focusedNoteId === note.id ? "border-primary/50" : "border-border/70",
+                )}
               >
                 <div className="min-w-0 flex-1 space-y-1.5">
+                  {note.title ? (
+                    <p className="text-sm font-semibold leading-snug text-foreground break-anywhere">
+                      {note.title}
+                    </p>
+                  ) : null}
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground break-anywhere">
                     {note.content}
                   </p>
+                  {note.data && Object.keys(note.data).length > 0 ? (
+                    <pre className="scrollbar-thin overflow-x-auto rounded-lg bg-secondary/60 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                      {JSON.stringify(note.data, null, 2)}
+                    </pre>
+                  ) : null}
                   <p className="text-xs text-muted-foreground">
                     {note.pinned ? "Pinned" : "Not pinned"}
                     {note.source ? ` · ${sourceDisplayName(note.source)}` : ""} ·{" "}

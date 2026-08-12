@@ -1,17 +1,34 @@
-import { NextResponse } from "next/server";
-
+import type { AgentActivity } from "@/lib/agent-activity";
+import { createMemoryBlockFilter, MEMORY_BLOCK_INSTRUCTIONS, saveMemoryCards } from "@/lib/agent-memory.server";
+import { runDeepResearch } from "@/lib/agent-research.server";
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
-import {
-  extractPublicRepositoryLinks,
-  inspectPublicRepository,
-  readWebPage,
-} from "@/lib/nvidia-tools.server";
-import { loadNvidiaApiKey } from "@/lib/nvidia.server";
+import { connectToDatabase, ConversationMessage } from "@/lib/mongodb.server";
+import { extractPublicRepositoryLinks } from "@/lib/nvidia-tools.server";
+import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
+import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
+import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import { errorMessage } from "@/lib/utils";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
+import {
+  MAX_REPOSITORY_TARGETS,
+  MAX_RESEARCH_REPOSITORIES,
+  sourceResourceNameSchema,
+} from "@/lib/validators";
 
 const MODEL_IDS: ReadonlySet<string> = new Set(NVIDIA_MODELS.map((item) => item.id));
 const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
+
+const SYSTEM_PROMPT = [
+  "You are the Jules+ project assistant.",
+  "Answer in concise markdown, using the repository context, research findings, attached files, and image analysis provided with the request.",
+  "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
+  "Never start or stop a Jules session without first proposing an explicit confirmation step.",
+  "When a repository is selected, always reference specific file paths and code patterns from the research findings.",
+  "Use saved memory notes as authoritative context about the project. If memory mentions conventions or patterns, follow them in your suggestions.",
+  "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
+  "Reference previous conversation context provided to maintain continuity. Avoid repeating explanations already given in earlier messages.",
+  MEMORY_BLOCK_INSTRUCTIONS,
+].join(" ");
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +37,7 @@ interface IncomingAttachment {
   type: string;
   content?: string;
   dataUrl?: string;
+  isPromptAttachment?: boolean;
 }
 
 interface ProviderMessage {
@@ -34,7 +52,11 @@ export async function POST(request: Request) {
       model?: unknown;
       history?: unknown;
       source?: unknown;
+      branch?: unknown;
+      memoryContext?: unknown;
       attachments?: unknown;
+      researchRepositories?: unknown;
+      deepResearch?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     const requestedModel = typeof body.model === "string" ? body.model : "";
@@ -55,7 +77,14 @@ export async function POST(request: Request) {
           .map((item) => ({ role: item.role, content: item.content.slice(0, 20_000) }))
       : [];
     const source = typeof body.source === "string" ? body.source : "";
+    const branch = typeof body.branch === "string" && body.branch.trim() ? body.branch.trim() : undefined;
+    const memoryContext = typeof body.memoryContext === "string" ? body.memoryContext.trim().slice(0, 24_000) : "";
     const attachments = normalizeAttachments(body.attachments);
+    const researchRepositories = normalizeResearchRepositories(body.researchRepositories);
+    const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
+    // Long composer messages arrive as a markdown attachment so the model gets
+    // the complete request without relying on a large inline prompt field.
+    const intentPrompt = promptAttachment?.content?.trim() || prompt;
     const invalidImage = attachments.find((attachment) => attachment.type.startsWith("image/") && !isSafeImageDataUrl(attachment.dataUrl));
     if (invalidImage) {
       return jsonError(`The image "${invalidImage.name}" could not be prepared. Use a PNG, JPG, or WEBP image under 4 MB.`, 422, { code: "IMAGE_PREPARATION_FAILED" });
@@ -65,79 +94,179 @@ export async function POST(request: Request) {
       return jsonError(`The image "${oversizedImage.name}" is too large after compression.`, 413, { code: "IMAGE_TOO_LARGE" });
     }
 
-    const repositoryInputs = [...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)];
-    const uniqueRepositoryInputs = [...new Set(repositoryInputs)];
-    const repositoryResearch = await Promise.all(
-      uniqueRepositoryInputs.slice(0, 4).map(async (repository) => inspectPublicRepository(repository)),
-    );
-
-    const urls = [...new Set((prompt.match(/https?:\/\/[^\s<>'"]+/gi) ?? []).map((url) => url.replace(/[),.;!?]+$/, "")))].slice(0, 4);
-    const webResearch = await Promise.all(
-      urls
-        .filter((url) => !/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+/i.test(url))
-        .map(async (url) => `Web research (${url}):\n${await readWebPage(url)}`),
-    );
-
-    const research = [
-      repositoryResearch.length > 0 ? `MCP repository context:\n${repositoryResearch.join("\n\n")}` : "",
-      ...webResearch,
-    ].filter(Boolean).join("\n\n");
-    const fileContext = attachments
-      .filter((attachment) => attachment.content)
-      .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
-      .join("\n\n");
-    const imageContext = await describeImages(attachments, apiKey);
-    const userText = [prompt, research, fileContext, imageContext].filter(Boolean).join("\n\n");
-    const userContent: string = userText;
-
-    const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        messages: [
-          {
-            role: "system",
-            content: "You are the Jules DeepDive project memory assistant. Think in concise steps. Use the MCP repository context, public links, attached files, and images to understand the request. Gather durable user/project memory. Never start or stop Jules without proposing an explicit confirmation action card.",
-          },
-          ...history,
-          { role: "user", content: userContent },
-        ],
-        temperature: 0.2,
-        max_tokens: 1200,
-      }),
-    });
-    if (!response.ok || !response.body) {
-      const data = await response.json().catch(() => null);
-      return jsonError(typeof data?.message === "string" ? data.message : "DeepSeek request failed.", response.status >= 500 ? 502 : response.status, { code: "NVIDIA_REQUEST_FAILED" });
-    }
-
+    const deepResearch = body.deepResearch === true || shouldRunDeepResearch(intentPrompt);
     const encoder = new TextEncoder();
+
     const stream = new ReadableStream({
       async start(controller) {
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let emittedToken = false;
-
-        const processLine = (line: string) => {
-          if (!line.startsWith("data:")) return;
-          const value = line.slice(5).trim();
-          if (!value || value === "[DONE]") return;
-          const payload = JSON.parse(value) as {
-            error?: { message?: string };
-            choices?: Array<{ delta?: { content?: unknown } }>;
-          };
-          if (payload.error) throw new Error(payload.error.message ?? "The model returned an error.");
-          const token = payload.choices?.[0]?.delta?.content;
-          if (typeof token === "string" && token.length > 0) {
-            emittedToken = true;
-            controller.enqueue(encoder.encode(token));
-          }
+        /** Every chunk is one newline-delimited JSON event. */
+        const send = (event: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
         };
+        const sendStatus = (activity: AgentActivity) => send({ type: "status", activity });
 
         try {
+          sendStatus("thinking");
+
+          const fileContext = attachments
+            .filter((attachment) => attachment.content)
+            .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
+            .join("\n\n");
+
+          let imageContext = "";
+          if (attachments.some((attachment) => attachment.type.startsWith("image/"))) {
+            sendStatus("reading");
+            imageContext = await describeImages(attachments, apiKey);
+          }
+
+          const repositoryInputs = [...new Set([
+            ...(source ? [source] : []),
+            ...researchRepositories,
+            ...extractPublicRepositoryLinks(intentPrompt),
+          ])].slice(0, MAX_REPOSITORY_TARGETS);
+          let research = "";
+          if (repositoryInputs.length > 0 && !deepResearch) {
+            sendStatus("inspecting");
+            const repositoryResearch = await Promise.all(
+              repositoryInputs.map(async (repository) => {
+                const result = await callRepositoryMcpTool("inspect_repository", { repository });
+                return `Repository context for ${repository}:\n${result}`;
+              }),
+            );
+            research = repositoryResearch.join("\n\n");
+          }
+
+          // Deep traversal runs independently for each selected repository so
+          // the research model cannot accidentally treat one codebase as another.
+          let deepFindings = "";
+          if (deepResearch) {
+            const deepTargets = repositoryInputs.length > 0 ? repositoryInputs : [undefined];
+            const findings = await Promise.all(
+              deepTargets.map(async (repository) => {
+                const scopedPrompt = repository
+                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request:\n${intentPrompt}`
+                  : intentPrompt;
+                return {
+                  repository,
+                  findings: await runDeepResearch({
+                    apiKey,
+                    model,
+                    prompt: scopedPrompt,
+                    source: repository,
+                    onActivity: sendStatus,
+                  }),
+                };
+              }),
+            );
+            deepFindings = findings
+              .filter((item) => item.findings)
+              .map((item) => item.repository ? `Research findings for ${item.repository}:\n${item.findings}` : item.findings)
+              .join("\n\n");
+          }
+
+          sendStatus("working");
+
+          // Fetch older conversation messages for continuity context.
+          // Hybrid heuristic: always include the last 3 messages (most recent context),
+          // then fill remaining budget with shorter historical messages for efficiency.
+          let conversationContext = "";
+          try {
+            await connectToDatabase();
+            const recentMessages = await ConversationMessage.find(
+              source ? { source } : { source: null },
+            )
+              .sort({ createdAt: -1 })
+              .limit(10)
+              .lean<Array<{ role: string; content: string; tokenEstimate: number; createdAt: Date }>>()
+              .exec();
+
+            if (recentMessages.length > 0) {
+              // Always keep the last 3 messages regardless of length for recency
+              const alwaysInclude = recentMessages.slice(0, 3);
+              // From the remaining older messages, prefer shorter ones for budget efficiency
+              const older = recentMessages.slice(3);
+              const shorterOlder = [...older]
+                .sort((a, b) => a.tokenEstimate - b.tokenEstimate)
+                .slice(0, 5);
+
+              const prioritized = [...alwaysInclude, ...shorterOlder];
+              // Sort final set chronologically (oldest first) for natural reading order
+              prioritized.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+              conversationContext =
+                "Previous conversation (for continuity):\n" +
+                prioritized
+                  .map((m) => `[${m.role}]: ${m.content.slice(0, 500)}`)
+                  .join("\n");
+            }
+          } catch {
+            // DB failures must not block the response
+          }
+
+          const userContent = [
+            prompt,
+            memoryContext ? `Known project memory:\n${memoryContext}` : "",
+            conversationContext,
+            research,
+            deepFindings,
+            fileContext,
+            imageContext,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+
+          const response = await rateLimitedFetch(NVIDIA_CHAT_COMPLETIONS_URL, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model,
+              stream: true,
+              messages: [
+                { role: "system", content: SYSTEM_PROMPT },
+                ...history,
+                { role: "user", content: userContent },
+              ],
+              temperature: 0.2,
+              max_tokens: 1600,
+            }),
+          });
+          if (!response.ok || !response.body) {
+            if (response.status === 429) {
+              sendStatus("waiting");
+            }
+            const data = (await response.json().catch(() => null)) as { message?: unknown } | null;
+            throw new Error(
+              typeof data?.message === "string" ? data.message : `The model request failed (${response.status}).`,
+            );
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          const memoryFilter = createMemoryBlockFilter();
+          let buffer = "";
+          let emittedToken = false;
+          let fullResponse = "";
+
+          const processLine = (line: string) => {
+            if (!line.startsWith("data:")) return;
+            const value = line.slice(5).trim();
+            if (!value || value === "[DONE]") return;
+
+            const payload = JSON.parse(value) as {
+              error?: { message?: string };
+              choices?: Array<{ delta?: { content?: unknown } }>;
+            };
+            if (payload.error) throw new Error(payload.error.message ?? "The model returned an error.");
+
+            const token = payload.choices?.[0]?.delta?.content;
+            if (typeof token !== "string" || token.length === 0) return;
+
+            emittedToken = true;
+            fullResponse += token;
+            const visible = memoryFilter.push(token);
+            if (visible) send({ type: "token", value: visible });
+          };
+
           while (true) {
             const result = await reader.read();
             if (result.done) break;
@@ -148,14 +277,83 @@ export async function POST(request: Request) {
           }
           buffer += decoder.decode();
           if (buffer.trim()) processLine(buffer.trim());
+
+          const trailing = memoryFilter.flush();
+          if (trailing) send({ type: "token", value: trailing });
           if (!emittedToken) throw new Error("The model returned an empty response.");
+
+          // Emit jules_fix_proposal AFTER the response is fully streamed
+          if (
+            repositoryInputs.length <= 1 &&
+            (researchRepositories.length === 0 || researchRepositories.includes(source)) &&
+            shouldOfferJulesFix(intentPrompt, source)
+          ) {
+            send({
+              type: "jules_fix_proposal",
+              proposal: {
+                prompt: buildJulesFixPrompt({
+                  userRequest: intentPrompt,
+                  source,
+                  branch,
+                  memoryContext,
+                }),
+                source,
+                branch,
+                title: buildFixTitle(prompt, source),
+              },
+            });
+          }
+
+          // Persist anything the model wrote to the memory board.
+          const memoryBlock = memoryFilter.memoryBlock();
+          if (memoryBlock) {
+            sendStatus("saving");
+            const saved = await saveMemoryCards(memoryBlock, source || null);
+            if (saved > 0) send({ type: "memory", saved });
+          }
+
+          // Save conversation messages for agentic memory
+          try {
+            await connectToDatabase();
+            const sourceValue = source || null;
+            await ConversationMessage.insertMany([
+              {
+                role: "user",
+                content: intentPrompt.slice(0, 20000),
+                source: sourceValue,
+                summary: null,
+                tokenEstimate: Math.ceil(intentPrompt.length / 4),
+              },
+              {
+                role: "assistant",
+                content: fullResponse.slice(0, 20000),
+                source: sourceValue,
+                summary: null,
+                tokenEstimate: Math.ceil(fullResponse.length / 4),
+              },
+            ]);
+          } catch {
+            // Failures saving conversation history must not break the response
+          }
+
+          sendStatus("done");
+          send({ type: "done" });
           controller.close();
         } catch (error) {
-          controller.error(error);
+          // The client renders this instead of a partial reply.
+          send({ type: "error", message: errorMessage(error, "The assistant request failed.") });
+          controller.close();
         }
       },
     });
-    return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive" } });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   } catch (error) {
     return handleRouteError(error);
   }
@@ -175,7 +373,7 @@ async function describeImages(attachments: IncomingAttachment[], apiKey: string)
     const timeout = setTimeout(() => controller.abort(), 45_000);
     let response: Response;
     try {
-      response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         signal: controller.signal,
@@ -217,15 +415,89 @@ function normalizeAttachments(value: unknown): IncomingAttachment[] {
     .filter((item): item is IncomingAttachment =>
       Boolean(item && typeof item === "object" && typeof (item as { name?: unknown }).name === "string" && typeof (item as { type?: unknown }).type === "string"),
     )
-    .slice(0, 4)
+    .slice(0, 5)
     .map((item) => ({
       name: item.name.slice(0, 200),
       type: item.type.slice(0, 120),
       content: typeof item.content === "string" ? item.content.slice(0, 200_000) : undefined,
       dataUrl: typeof item.dataUrl === "string" ? item.dataUrl : undefined,
+      isPromptAttachment: item.isPromptAttachment === true,
     }));
+}
+
+function normalizeResearchRepositories(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) =>
+        item.startsWith("sources/github/") && sourceResourceNameSchema.safeParse(item).success,
+      ),
+  )].slice(0, MAX_RESEARCH_REPOSITORIES);
 }
 
 function isSafeImageDataUrl(value: string | undefined): value is string {
   return typeof value === "string" && /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(value);
+}
+
+
+function shouldOfferJulesFix(prompt: string, source: string) {
+  return Boolean(source.startsWith("sources/github/") && /\b(fix|bug|broken|error|failing|failure|issue|debug|repair|regression|not working)\b/i.test(prompt));
+}
+
+function shouldRunDeepResearch(prompt: string) {
+  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through)\b/i.test(prompt);
+}
+
+function buildFixTitle(prompt: string, source: string) {
+  const compact = prompt.replace(/\s+/g, " ").trim().replace(/^fix:\s*/i, "");
+  const repository = source.replace(/^sources\/github\//, "") || "repository";
+  return `Investigate and fix ${repository}: ${compact.slice(0, 120)}`;
+}
+
+function buildJulesFixPrompt({
+  userRequest,
+  source,
+  branch,
+  memoryContext,
+}: {
+  userRequest: string;
+  source: string;
+  branch?: string;
+  memoryContext: string;
+}) {
+  const repository = source.replace(/^sources\/github\//, "") || "the selected repository";
+  const selectedBranch = branch || "the repository default branch";
+  const memorySection = memoryContext
+    ? `Known project memory (use it as context, not as a substitute for inspecting the code):\n${memoryContext}`
+    : "No saved project memory was attached. Inspect the repository and establish the relevant conventions before editing.";
+
+  return [
+    "Act as the implementation engineer for a repository fix.",
+    `Repository: ${repository}`,
+    `Working branch: ${selectedBranch}`,
+    "",
+    "Objective",
+    "Diagnose and resolve the problem described below. Do not merely restate or copy the report: inspect the repository, identify the actual root cause, and implement the smallest complete production-quality fix.",
+    "",
+    `User-reported problem:\n${userRequest}`,
+    "",
+    memorySection,
+    "",
+    "Required approach",
+    "1. Inspect the relevant code paths, configuration, and existing patterns before making changes.",
+    "2. Reproduce or reason through the failure and identify its root cause.",
+    "3. Implement a focused fix that preserves existing behavior outside this issue.",
+    "4. Update related UI, API, types, or documentation when the fix requires it.",
+    "5. Run the most relevant available checks and report their results, including any environment limitations.",
+    "6. Summarize the root cause, changed files, verification, and any follow-up risks.",
+    "",
+    "Acceptance criteria",
+    "- The reported problem is resolved rather than hidden or bypassed.",
+    "- The implementation follows the repository's existing architecture and conventions.",
+    "- Existing functionality remains intact.",
+    "- Verification evidence is included in the final report.",
+  ].join("\n");
 }

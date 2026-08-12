@@ -1,0 +1,32 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Agentic memory system: agent saves conversation messages to DB, prioritizes shorter messages, refers to older messages while answering. Fix jules_fix_proposal to emit only after response is finished. Enhanced context for repo understanding, memory usage in Jules sessions, and referencing older messages.",
+  "status": "completed",
+  "steps": [
+    "1. Create a new MongoDB model for conversation history in lib/mongodb.server.ts: Add a ConversationMessage schema with fields: _id, role (user|assistant), content (string, max 20000), source (string|null, for repo scoping), summary (string|null, a short version for context injection), tokenEstimate (number, rough char/4 estimate), createdAt. Add index on {source, createdAt}. Export the model and serializer.",
+    "2. Create app/api/conversations/route.ts: GET (list recent messages for a source, limit 50) and POST (save a message). This stores every user prompt and assistant response automatically.",
+    "3. In app/api/nvidia/chat/route.ts: After the stream completes successfully (after 'done' event), save both the user message and the assistant response to the ConversationMessage collection via direct DB insert (no extra API call). Include the source field for scoping.",
+    "4. In app/api/nvidia/chat/route.ts: Build an 'older messages context' section. Before calling NVIDIA, fetch the last 10 conversation messages for the current source from MongoDB. Prioritize shorter messages (sort by tokenEstimate ascending, take top 8). Format them as a context block like 'Previous conversation context (refer to these for continuity):\\n- [user]: ...\\n- [assistant]: ...' and include in the userContent array sent to the model.",
+    "5. In app/api/nvidia/chat/route.ts: Fix the jules_fix_proposal timing. Currently it emits BEFORE the response. Move the shouldOfferJulesFix check and the send({type:'jules_fix_proposal'...}) call to AFTER the streaming is complete (after the while loop that reads tokens, before the memory block save). This ensures the proposal only appears once the full response is displayed.",
+    "6. In the SYSTEM_PROMPT in app/api/nvidia/chat/route.ts: Add instructions that enhance context for: (a) agentic repo understanding - tell the model to always inspect repository structure when a source is selected and use concrete file paths from research, (b) agentic memory - tell the model to save key findings to memory and refer to saved memory notes when relevant, (c) agentic memory usage for Jules sessions - when suggesting a Jules fix, tell the model to include relevant memory context in the generated prompt, (d) referencing older messages - tell the model to reference previous conversation context provided and maintain continuity.",
+    "7. Update the MEMORY_BLOCK_INSTRUCTIONS in lib/agent-memory.server.ts: Add guidance that the model should prefer saving concise, high-signal notes (shorter is better for recall). Notes should capture decisions, patterns, and key facts rather than verbose explanations. This helps the prioritization of shorter messages work effectively."
+  ],
+  "acceptance_criteria": [
+    "ConversationMessage model exists in mongodb.server.ts with proper schema",
+    "Conversation messages are saved after each successful chat completion",
+    "Older conversation context is fetched and included in prompts for continuity",
+    "Shorter messages are prioritized when building conversation context",
+    "jules_fix_proposal event is emitted AFTER streaming completes, not before",
+    "System prompt includes enhanced instructions for repo understanding, memory usage, and message referencing",
+    "Memory block instructions encourage concise, high-signal notes",
+    "typecheck passes, lint passes, build succeeds"
+  ],
+  "verification": [
+    "source /root/.nvm/nvm.sh && nvm use 22 >/dev/null && npm run typecheck",
+    "source /root/.nvm/nvm.sh && nvm use 22 >/dev/null && npm run lint",
+    "source /root/.nvm/nvm.sh && nvm use 22 >/dev/null && npm run build"
+  ],
+  "blocked_reason": null,
+  "findings": "All 8 acceptance criteria met. ConversationMessage model added with source+createdAt index. Messages auto-saved after chat stream. Older messages fetched and prioritized by tokenEstimate (shorter first, top 8 of 10). jules_fix_proposal moved from before streaming to after streaming completes. System prompt enhanced with 4 additional instructions. Memory block instructions updated with conciseness guidance. Typecheck, lint, and build all pass. v2 review fix: conversations API now requires a configured Jules API key (auth guard) before allowing read/write access."
+}
