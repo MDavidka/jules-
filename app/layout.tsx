@@ -8,14 +8,16 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Jules DeepDive · Async coding agent dashboard",
   description:
-    "Jules DeepDive is a focused dashboard for starting tasks, approving plans, and following live coding-agent progress across your repositories.",
+    "Jules DeepDive is a mobile-first research workspace for the Google Jules coding agent: investigate repositories, start tasks, approve plans, and follow live progress.",
   applicationName: "Jules DeepDive",
   icons: {
     icon: [
       { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
       { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/jules-octopus.jpeg", type: "image/jpeg" },
     ],
-    apple: "/apple-touch-icon.png",
+    shortcut: [{ url: "/favicon-32x32.png", type: "image/png" }],
+    apple: [{ url: "/apple-touch-icon.png", type: "image/png" }],
   },
   robots: { index: false, follow: false },
 };

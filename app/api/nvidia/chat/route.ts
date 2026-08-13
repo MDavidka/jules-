@@ -3,7 +3,16 @@ import { createMemoryBlockFilter, MEMORY_BLOCK_INSTRUCTIONS, saveMemoryCards } f
 import { runDeepResearch } from "@/lib/agent-research.server";
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
 import { connectToDatabase, ConversationMessage } from "@/lib/mongodb.server";
-import { extractPublicRepositoryLinks } from "@/lib/nvidia-tools.server";
+import {
+  extractPublicRepositoryLinks,
+} from "@/lib/nvidia-tools.server";
+import {
+  listActivities,
+  listSessions,
+  normalizeActivity,
+  normalizeSession,
+} from "@/lib/jules-client.server";
+import type { NormalizedActivity, NormalizedSession } from "@/types/jules";
 import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
 import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import { rateLimitedFetch } from "@/lib/rate-limiter.server";
@@ -19,11 +28,13 @@ const MODEL_IDS: ReadonlySet<string> = new Set(NVIDIA_MODELS.map((item) => item.
 const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
 
 const SYSTEM_PROMPT = [
-  "You are the Jules+ project assistant.",
+  "You are the Jules DeepDive project assistant.",
   "Answer in concise markdown, using the repository context, research findings, attached files, and image analysis provided with the request.",
   "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
   "Never start or stop a Jules session without first proposing an explicit confirmation step.",
-  "When a repository is selected, always reference specific file paths and code patterns from the research findings.",
+  "When a repository is selected, always reference specific file paths and code patterns from the exact raw source context before suggesting any implementation.",
+  "Use the read-only GitHub MCP context to inspect the actual source code; do not tell the user to start a Jules session merely to understand or investigate code.",
+  "Use historical Jules session context when provided to avoid repeating work and to connect current findings to earlier plans, failures, commands, and changed files.",
   "Use saved memory notes as authoritative context about the project. If memory mentions conventions or patterns, follow them in your suggestions.",
   "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
   "Reference previous conversation context provided to maintain continuity. Avoid repeating explanations already given in earlier messages.",
@@ -124,16 +135,11 @@ export async function POST(request: Request) {
             ...researchRepositories,
             ...extractPublicRepositoryLinks(intentPrompt),
           ])].slice(0, MAX_REPOSITORY_TARGETS);
-          let research = "";
-          if (repositoryInputs.length > 0 && !deepResearch) {
+
+          let repositoryEvidence = { text: "", filesRead: 0 };
+          if (repositoryInputs.length > 0) {
             sendStatus("inspecting");
-            const repositoryResearch = await Promise.all(
-              repositoryInputs.map(async (repository) => {
-                const result = await callRepositoryMcpTool("inspect_repository", { repository });
-                return `Repository context for ${repository}:\n${result}`;
-              }),
-            );
-            research = repositoryResearch.join("\n\n");
+            repositoryEvidence = await collectRepositoryEvidence(repositoryInputs, intentPrompt);
           }
 
           // Deep traversal runs independently for each selected repository so
@@ -144,7 +150,7 @@ export async function POST(request: Request) {
             const findings = await Promise.all(
               deepTargets.map(async (repository) => {
                 const scopedPrompt = repository
-                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request:\n${intentPrompt}`
+                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request. Exact source files must be read before you summarize:\n${intentPrompt}`
                   : intentPrompt;
                 return {
                   repository,
@@ -163,6 +169,10 @@ export async function POST(request: Request) {
               .map((item) => item.repository ? `Research findings for ${item.repository}:\n${item.findings}` : item.findings)
               .join("\n\n");
           }
+
+          const julesSessionContext = source
+            ? await collectRecentJulesSessionContext(repositoryInputs)
+            : "";
 
           sendStatus("working");
 
@@ -207,8 +217,9 @@ export async function POST(request: Request) {
             prompt,
             memoryContext ? `Known project memory:\n${memoryContext}` : "",
             conversationContext,
-            research,
+            repositoryEvidence.text,
             deepFindings,
+            julesSessionContext,
             fileContext,
             imageContext,
           ]
@@ -286,6 +297,7 @@ export async function POST(request: Request) {
           if (
             repositoryInputs.length <= 1 &&
             (researchRepositories.length === 0 || researchRepositories.includes(source)) &&
+            repositoryEvidence.filesRead > 0 &&
             shouldOfferJulesFix(intentPrompt, source)
           ) {
             send({
@@ -296,6 +308,8 @@ export async function POST(request: Request) {
                   source,
                   branch,
                   memoryContext,
+                  repositoryEvidence: repositoryEvidence.text,
+                  julesSessionContext,
                 }),
                 source,
                 branch,
@@ -444,7 +458,10 @@ function isSafeImageDataUrl(value: string | undefined): value is string {
 
 
 function shouldOfferJulesFix(prompt: string, source: string) {
-  return Boolean(source.startsWith("sources/github/") && /\b(fix|bug|broken|error|failing|failure|issue|debug|repair|regression|not working)\b/i.test(prompt));
+  return Boolean(
+    source.startsWith("sources/github/") &&
+    /\b(fix|repair|resolve|patch|implement|apply|modify|change)\b/i.test(prompt),
+  );
 }
 
 function shouldRunDeepResearch(prompt: string) {
@@ -462,17 +479,28 @@ function buildJulesFixPrompt({
   source,
   branch,
   memoryContext,
+  repositoryEvidence,
+  julesSessionContext,
 }: {
   userRequest: string;
   source: string;
   branch?: string;
   memoryContext: string;
+  repositoryEvidence: string;
+  julesSessionContext: string;
 }) {
   const repository = source.replace(/^sources\/github\//, "") || "the selected repository";
   const selectedBranch = branch || "the repository default branch";
   const memorySection = memoryContext
     ? `Known project memory (use it as context, not as a substitute for inspecting the code):\n${memoryContext}`
     : "No saved project memory was attached. Inspect the repository and establish the relevant conventions before editing.";
+
+  const evidenceSection = repositoryEvidence
+    ? `Exact raw source evidence already collected through read-only GitHub MCP:\n${repositoryEvidence.slice(0, 12_000)}`
+    : "No exact repository evidence was collected.";
+  const historicalSection = julesSessionContext
+    ? `Historical Jules session context already collected (do not repeat completed work blindly):\n${julesSessionContext.slice(0, 8_000)}`
+    : "No matching historical Jules session context was available.";
 
   return [
     "Act as the implementation engineer for a repository fix.",
@@ -485,6 +513,10 @@ function buildJulesFixPrompt({
     `User-reported problem:\n${userRequest}`,
     "",
     memorySection,
+    "",
+    evidenceSection,
+    "",
+    historicalSection,
     "",
     "Required approach",
     "1. Inspect the relevant code paths, configuration, and existing patterns before making changes.",
@@ -500,4 +532,123 @@ function buildJulesFixPrompt({
     "- Existing functionality remains intact.",
     "- Verification evidence is included in the final report.",
   ].join("\n");
+}
+
+
+interface RepositoryEvidence {
+  text: string;
+  filesRead: number;
+}
+
+async function collectRepositoryEvidence(repositories: string[], prompt: string): Promise<RepositoryEvidence> {
+  const results = await Promise.all(repositories.map(async (repository) => {
+    const treeOutput = await callRepositoryMcpTool("list_repository_files", { repository, limit: 400 });
+    const paths = selectRelevantRepositoryPaths(treeOutput, prompt);
+    const reads = await Promise.all(
+      paths.slice(0, 3).map(async (path) => ({
+        path,
+        output: await callRepositoryMcpTool("read_repository_file", { repository, path }),
+      })),
+    );
+
+    return {
+      repository,
+      treeOutput,
+      reads,
+      filesRead: reads.filter((item) => !item.output.startsWith("Repository MCP request failed") && !item.output.startsWith("Could not read")).length,
+    };
+  }));
+
+  return {
+    filesRead: results.reduce((total, result) => total + result.filesRead, 0),
+    text: results
+      .map((result) => [
+        `Exact GitHub source context for ${result.repository}:`,
+        `Repository file tree:\n${result.treeOutput}`,
+        ...result.reads.map((item) => `Raw file ${item.path}:\n${item.output}`),
+      ].join("\n\n"))
+      .join("\n\n")
+      .slice(0, 60_000),
+  };
+}
+
+function selectRelevantRepositoryPaths(treeOutput: string, prompt: string): string[] {
+  let files: Array<{ path?: string }> = [];
+  try {
+    const parsed = JSON.parse(treeOutput) as { files?: Array<{ path?: string }> };
+    files = parsed.files ?? [];
+  } catch {
+    return [];
+  }
+
+  const terms = prompt
+    .toLowerCase()
+    .split(/[^a-z0-9_-]+/)
+    .filter((term) => term.length >= 4)
+    .slice(0, 20);
+  const sourcePattern = /\.(tsx?|jsx?|py|rb|go|rs|java|kt|php|cs|swift|vue|svelte|css|scss)$/i;
+  const scored = files
+    .filter((file): file is { path: string } => typeof file.path === "string" && sourcePattern.test(file.path))
+    .map((file) => {
+      const path = file.path.toLowerCase();
+      const score = terms.reduce((total, term) => total + (path.includes(term) ? 3 : 0), 0)
+        + (/(^|\/)(src|app|lib|server|api|components)\//.test(path) ? 2 : 0)
+        + (/(index|main|server|route|app)\./.test(path) ? 1 : 0);
+      return { path: file.path, score };
+    })
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+
+  return scored.slice(0, 3).map((file) => file.path);
+}
+
+async function collectRecentJulesSessionContext(repositories: string[]): Promise<string> {
+  try {
+    const listed = await listSessions({ pageSize: 50 });
+    const targetSet = new Set(repositories.filter((repository) => repository.startsWith("sources/github/")));
+    const sessions = (listed.sessions ?? [])
+      .map(normalizeSession)
+      .filter((session) => session.source && (targetSet.size === 0 || targetSet.has(session.source)))
+      .sort((a, b) => sessionTimestamp(b) - sessionTimestamp(a))
+      .slice(0, 4);
+
+    if (sessions.length === 0) return "";
+
+    const contexts = await Promise.all(sessions.map(async (session) => {
+      const activities = await listActivities(session.name, { pageSize: 40 });
+      const normalized = (activities.activities ?? []).map(normalizeActivity);
+      return formatJulesSessionContext(session, normalized);
+    }));
+
+    return `Recent Jules session context (historical, read-only):\n${contexts.join("\n\n")}`.slice(0, 24_000);
+  } catch {
+    return "";
+  }
+}
+
+function sessionTimestamp(session: NormalizedSession): number {
+  return new Date(session.updateTime ?? session.createTime ?? 0).getTime() || 0;
+}
+
+function formatJulesSessionContext(session: NormalizedSession, activities: NormalizedActivity[]): string {
+  const activityText = activities
+    .filter((activity) => activity.body || activity.plan || activity.failureReason || activity.artifacts.length > 0)
+    .slice(-12)
+    .map((activity) => {
+      const details = [
+        activity.body,
+        activity.failureReason ? `Failure: ${activity.failureReason}` : "",
+        activity.plan ? `Plan: ${(activity.plan.steps ?? []).map((step) => step.title ?? step.description ?? "").filter(Boolean).join("; ")}` : "",
+        ...activity.artifacts.map((artifact) => artifact.bashOutput?.command ? `Command: ${artifact.bashOutput.command}` : artifact.changeSet?.gitPatch?.suggestedCommitMessage ? `Patch: ${artifact.changeSet.gitPatch.suggestedCommitMessage}` : ""),
+      ].filter(Boolean);
+      return `- ${activity.title}: ${details.join(" | ").slice(0, 1200)}`;
+    })
+    .join("\n");
+
+  return [
+    `Session: ${session.title}`,
+    `Repository: ${session.source ?? "unknown"}`,
+    `State: ${session.state}; branch: ${session.branch ?? "default"}`,
+    `Original task: ${session.prompt.slice(0, 1600)}`,
+    activityText ? `Activities:\n${activityText}` : "",
+  ].filter(Boolean).join("\n");
 }
