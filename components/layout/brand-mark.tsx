@@ -13,7 +13,7 @@ export function BrandMark({
   return (
     <span aria-hidden="true" className={cn("inline-flex items-center justify-center", className)}>
       <Image
-        src="/jules-octopus.jpeg"
+        src="/jules-deepdive-logo.png"
         alt=""
         width={48}
         height={48}
