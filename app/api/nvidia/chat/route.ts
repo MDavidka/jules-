@@ -2,12 +2,10 @@ import { NextResponse } from "next/server";
 
 import { handleRouteError, jsonError, parseJsonBody } from "@/lib/api-response.server";
 import {
-  extractCodePathHints,
   extractPublicRepositoryLinks,
   inspectPublicRepository,
   readWebPage,
 } from "@/lib/nvidia-tools.server";
-import { listActivities, listSessions, normalizeActivity, normalizeSession } from "@/lib/jules-client.server";
 import { loadNvidiaApiKey } from "@/lib/nvidia.server";
 import { errorMessage } from "@/lib/utils";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
@@ -69,11 +67,9 @@ export async function POST(request: Request) {
 
     const repositoryInputs = [...(source ? [source] : []), ...extractPublicRepositoryLinks(prompt)];
     const uniqueRepositoryInputs = [...new Set(repositoryInputs)];
-    const pathHints = extractCodePathHints(prompt);
     const repositoryResearch = await Promise.all(
-      uniqueRepositoryInputs.slice(0, 4).map(async (repository) => inspectPublicRepository(repository, { pathHints, maxFiles: 12 })),
+      uniqueRepositoryInputs.slice(0, 4).map(async (repository) => inspectPublicRepository(repository)),
     );
-    const historicalJulesContext = await loadHistoricalJulesContext(source);
 
     const urls = [...new Set((prompt.match(/https?:\/\/[^\s<>'"]+/gi) ?? []).map((url) => url.replace(/[),.;!?]+$/, "")))].slice(0, 4);
     const webResearch = await Promise.all(
@@ -83,8 +79,7 @@ export async function POST(request: Request) {
     );
 
     const research = [
-      repositoryResearch.length > 0 ? `MCP repository context (exact raw files are included under rawFiles; inspect those before proposing changes):\n${repositoryResearch.join("\n\n")}` : "",
-      historicalJulesContext,
+      repositoryResearch.length > 0 ? `MCP repository context:\n${repositoryResearch.join("\n\n")}` : "",
       ...webResearch,
     ].filter(Boolean).join("\n\n");
     const fileContext = attachments
@@ -104,7 +99,7 @@ export async function POST(request: Request) {
         messages: [
           {
             role: "system",
-            content: "You are the Jules DeepDive main agent. Inspect exact raw repository files and callable functions in the MCP repository context before reasoning about code. Use older Jules session context when relevant, and do not start a new Jules session merely to inspect, explain, or plan: only propose execution when the user explicitly requests it. Never claim a function or file exists unless it is supported by the raw content.",
+            content: "You are the Jules DeepDive project memory assistant. Think in concise steps. Use the MCP repository context, public links, attached files, and images to understand the request. Gather durable user/project memory. Never start or stop Jules without proposing an explicit confirmation action card.",
           },
           ...history,
           { role: "user", content: userContent },
@@ -163,49 +158,6 @@ export async function POST(request: Request) {
     return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive" } });
   } catch (error) {
     return handleRouteError(error);
-  }
-}
-
-async function loadHistoricalJulesContext(source: string): Promise<string> {
-  if (!source) return "";
-  try {
-    const sourceKey = source.toLowerCase().replace(/^https?:\/\/github\.com\//, "").replace(/^sources\/github\//, "").replace(/\.git(?:\/.*)?$/, "").split(/[?#]/)[0];
-    const listing = await listSessions({ pageSize: 50 });
-    const sessions = (listing.sessions ?? [])
-      .map(normalizeSession)
-      .filter((session) => {
-        const sessionSource = (session.sourceFullName ?? session.source ?? "").toLowerCase().replace(/^sources\/github\//, "");
-        return sessionSource === sourceKey || sessionSource.endsWith(`/${sourceKey}`) || sourceKey.endsWith(`/${sessionSource}`);
-      })
-      .sort((left, right) => (right.updateTime ?? right.createTime ?? "").localeCompare(left.updateTime ?? left.createTime ?? ""))
-      .slice(0, 5);
-    if (sessions.length === 0) return "No older Jules sessions were found for this repository.";
-
-    const selected = sessions.slice(0, 3);
-    const details = await Promise.all(selected.map(async (session) => {
-      const activities = await listActivities(session.name, { pageSize: 24 });
-      const activityText = (activities.activities ?? [])
-        .map(normalizeActivity)
-        .filter((activity) => activity.body)
-        .slice(-12)
-        .map((activity) => `${activity.kind}: ${activity.title}\n${activity.body}`)
-        .join("\n\n");
-      return JSON.stringify({
-        session: {
-          name: session.name,
-          title: session.title,
-          state: session.state,
-          prompt: session.prompt,
-          branch: session.branch,
-          updated: session.updateTime ?? session.createTime,
-          pullRequestUrl: session.pullRequestUrl,
-        },
-        activities: activityText,
-      }, null, 2);
-    }));
-    return `Older Jules session context for ${sourceKey}. Reuse this context when it answers the request; do not start a new Jules session unless the user explicitly asks for execution:\n${details.join("\n\n")}`;
-  } catch {
-    return "Older Jules session context is unavailable; continue using the exact repository files and current request.";
   }
 }
 

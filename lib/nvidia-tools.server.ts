@@ -18,19 +18,6 @@ interface ResolvedRepo {
   branch: string;
 }
 
-interface RepositoryTreeEntry {
-  path?: string;
-  type?: string;
-  size?: number;
-}
-
-export interface RepositoryInspectionOptions {
-  /** File/path fragments explicitly mentioned by the user. */
-  pathHints?: string[];
-  /** Maximum number of raw source files to include in the model context. */
-  maxFiles?: number;
-}
-
 /**
  * Resolves a GitHub repository from a Jules source name
  * (`sources/github/owner/repo`), a full GitHub link
@@ -74,15 +61,7 @@ export function extractPublicRepositoryLinks(value: string): string[] {
  * pulls the repository's raw git content (README plus common manifests) so the
  * model can describe what the codebase is about.
  */
-export function extractCodePathHints(value: string): string[] {
-  const candidates = value.match(/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+/g) ?? [];
-  return [...new Set(candidates
-    .map((candidate) => candidate.replace(/^\/+|\/+$/g, ""))
-    .filter((candidate) => /\.(?:ts|tsx|js|jsx|py|go|rs|java|rb|php|json|yml|yaml|md)$/i.test(candidate) || /^(?:app|src|lib|components|api|routes|server|client)\//i.test(candidate)))]
-    .slice(0, 16);
-}
-
-export async function inspectPublicRepository(source: string, options: RepositoryInspectionOptions = {}) {
+export async function inspectPublicRepository(source: string) {
   const repo = resolveGitHubRepo(source);
   if (!repo) return "No repository was selected.";
 
@@ -137,8 +116,6 @@ export async function inspectPublicRepository(source: string, options: Repositor
     manifests.push({ path: MANIFEST_FILES[index]!, content: (await response.text()).slice(0, 4000) });
   }
 
-  const rawFiles = await fetchRelevantRawFiles(repo, repoMeta?.default_branch ?? repo.branch, options);
-
   return JSON.stringify(
     {
       repository: {
@@ -151,49 +128,10 @@ export async function inspectPublicRepository(source: string, options: Repositor
       },
       readme,
       manifests,
-      rawFiles,
     },
     null,
     2,
   );
-}
-
-async function fetchRelevantRawFiles(
-  repo: ResolvedRepo,
-  branch: string,
-  options: RepositoryInspectionOptions,
-): Promise<Array<{ path: string; content: string; url: string }>> {
-  const treeResponse = await fetch(
-    `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
-    { headers: { Accept: "application/vnd.github+json", "User-Agent": "jules-deepdive" }, next: { revalidate: 300 } },
-  );
-  if (!treeResponse.ok) return [];
-
-  const tree = await treeResponse.json() as { tree?: RepositoryTreeEntry[] };
-  const files = (tree.tree ?? [])
-    .filter((entry) => entry.type === "blob" && typeof entry.path === "string")
-    .map((entry) => ({ path: entry.path!, size: entry.size ?? 0 }));
-  const hints = (options.pathHints ?? []).map((hint) => hint.toLowerCase());
-  const sourceFile = /\.(?:ts|tsx|js|jsx|py|go|rs|java|rb|php|cs|c|cpp|h|sql)$/i;
-  const ignored = /(^|\/)(?:node_modules|\.git|dist|build|coverage|vendor|\.next)(\/|$)/i;
-  const scored = files
-    .filter((file) => sourceFile.test(file.path) && !ignored.test(file.path) && file.size <= 180_000)
-    .map((file) => {
-      const lower = file.path.toLowerCase();
-      const explicit = hints.some((hint) => lower === hint || lower.endsWith(`/${hint}`));
-      const hintScore = hints.reduce((score, hint) => score + (lower.includes(hint) ? 8 : 0), 0);
-      const important = /(?:route|api|server|client|service|tool|agent|mcp|github|index|main|app|lib)/i.test(file.path) ? 2 : 0;
-      return { file, score: (explicit ? 100 : 0) + hintScore + important };
-    })
-    .sort((left, right) => right.score - left.score || left.file.path.localeCompare(right.file.path));
-  const selected = scored.slice(0, Math.max(1, Math.min(options.maxFiles ?? 10, 16)));
-  const filesWithContent = await Promise.all(selected.map(async ({ file }) => {
-    const url = `${GITHUB_RAW_BASE}/${repo.owner}/${repo.repo}/${encodeURIComponent(branch)}/${file.path.split("/").map(encodeURIComponent).join("/")}`;
-    const response = await fetch(url, { headers: { "User-Agent": "jules-deepdive" }, next: { revalidate: 300 } });
-    if (!response.ok) return null;
-    return { path: file.path, content: (await response.text()).slice(0, 24_000), url };
-  }));
-  return filesWithContent.filter((file): file is { path: string; content: string; url: string } => Boolean(file));
 }
 
 export async function readWebPage(url: string) {
