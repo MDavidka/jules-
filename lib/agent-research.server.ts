@@ -18,6 +18,7 @@ const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
   list_repository_files: "inspecting",
   read_repository_file: "inspecting",
   inspect_repository: "inspecting",
+  validate_github_connection: "inspecting",
 };
 
 /** OpenAI-compatible tool definitions advertised to the model. */
@@ -79,9 +80,18 @@ const TOOL_DEFINITIONS = [
         properties: {
           repository: { type: "string", description: "A GitHub URL, `owner/repo`, or a Jules source name." },
           path: { type: "string", description: "Repository-relative file path." },
+          ref: { type: "string", description: "Optional branch, tag, or commit SHA. Defaults to the repository default branch." },
         },
         required: ["repository", "path"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "validate_github_connection",
+      description: "Validate the connected GitHub account and confirm it has repository-read capability before private-repository investigation.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -149,7 +159,8 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
       content: [
         "You are the research stage of a coding assistant.",
         "Investigate the user's request using the provided tools before anyone answers.",
-        "Work in small steps: list repository files before reading them, and search the web before reading a page.",
+        "Work in small steps: validate the connected GitHub account when repository access matters, list repository files before reading them, and search the web before reading a page.",
+        "When checking code, use read_repository_file to retrieve the exact raw file content and include the ref returned by the tool in your reasoning; do not infer file contents from filenames or summaries.",
         source ? `The user's currently selected repository is: ${source}` : "",
         "When you have enough evidence, stop calling tools and reply with concise bullet-point findings.",
         "Include concrete file paths, versions, commands, and URLs you actually saw. Never invent details.",
@@ -264,7 +275,8 @@ async function executeTool(
     case "list_repository_files":
     case "read_repository_file":
     case "inspect_repository":
-      return callRepositoryMcpTool(name, { ...input, repository });
+    case "validate_github_connection":
+      return callRepositoryMcpTool(name, name === "validate_github_connection" ? {} : { ...input, repository });
     default:
       return `Unknown tool: ${name || "(unnamed)"}.`;
   }

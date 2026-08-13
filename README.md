@@ -39,6 +39,9 @@ On first load you get a full-screen setup gate:
 1. Create an API key in [Jules Settings](https://jules.google.com/settings) (max 3 keys).
 2. Install the Jules GitHub App and grant it repository access.
 3. Paste the key. It is validated against `GET /sources?pageSize=1` **before** anything is written to the database.
+4. Connect a GitHub account through `/api/github/connect`. The callback stores the OAuth token encrypted; `/api/github/status` performs a live `GET https://api.github.com/user` check and reports the account login, OAuth scopes, and repository-read capability without exposing the token.
+
+The GitHub connection requests `read:user repo`. The `repo` scope is required when the agent must inspect private repositories. A token merely existing in MongoDB is not considered connected if GitHub rejects it or the account lacks a repository-read scope.
 
 ## Security model
 
@@ -80,6 +83,13 @@ All Jules traffic is proxied; the browser never holds a key.
 | `/api/sessions/[sessionName]/messages` | POST | `sessions.sendMessage` |
 | `/api/memory`, `/api/memory/[id]` | GET, POST, PATCH, DELETE | MongoDB only |
 | `/api/preferences` | GET, PATCH | MongoDB only |
+| `/api/github/connect` | GET | Starts GitHub OAuth with CSRF state protection |
+| `/api/github/callback` | GET | Exchanges the OAuth code and stores the encrypted token |
+| `/api/github/status` | GET | Live-validates the connected GitHub account |
+
+### Repository MCP tools
+
+The research agent uses an in-process read-only MCP server. It exposes `validate_github_connection`, `list_repository_files`, `inspect_repository`, and `read_repository_file`. The last tool retrieves the exact text from `raw.githubusercontent.com`, reports the repository, ref, path, source, and truncation state, and accepts an optional branch, tag, or commit SHA. The agent is instructed to list files first and use the raw-file tool rather than infer content from filenames or summaries.
 
 ### Notes on the upstream API
 

@@ -10,6 +10,7 @@ import {
   inspectPublicRepository,
   listRepositoryTree,
   readRepositoryFile,
+  validateGitHubConnection,
 } from "@/lib/nvidia-tools.server";
 
 const SERVER_INFO = { name: "jules-plus-github", version: "1.0.0" };
@@ -17,6 +18,7 @@ const REPOSITORY_TOOLS = new Set([
   "inspect_repository",
   "list_repository_files",
   "read_repository_file",
+  "validate_github_connection",
 ]);
 
 /**
@@ -30,6 +32,18 @@ function createRepositoryMcpServer(accessToken: string | null) {
     instructions:
       "Read-only GitHub repository context. List files before reading a file, and use repository-relative paths.",
   });
+
+  server.registerTool(
+    "validate_github_connection",
+    {
+      title: "Validate connected GitHub account",
+      description: "Verify the connected GitHub token with GitHub and report the account login and repository-read capability.",
+      inputSchema: {},
+    },
+    async () => ({
+      content: [{ type: "text", text: JSON.stringify(await validateGitHubConnection(accessToken ?? undefined), null, 2) }],
+    }),
+  );
 
   server.registerTool(
     "inspect_repository",
@@ -66,10 +80,11 @@ function createRepositoryMcpServer(accessToken: string | null) {
       inputSchema: {
         repository: z.string().min(1).max(500),
         path: z.string().min(1).max(500),
+        ref: z.string().min(1).max(200).optional(),
       },
     },
-    async ({ repository, path }) => ({
-      content: [{ type: "text", text: await readRepositoryFile(repository, path, accessToken ?? undefined) }],
+    async ({ repository, path, ref }) => ({
+      content: [{ type: "text", text: await readRepositoryFile(repository, path, accessToken ?? undefined, ref) }],
     }),
   );
 
