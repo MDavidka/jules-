@@ -17,6 +17,7 @@ const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
   read_web_page: "reading",
   list_repository_files: "inspecting",
   read_repository_file: "inspecting",
+  githubgetfile: "inspecting",
   inspect_repository: "inspecting",
   validate_github_connection: "inspecting",
 };
@@ -74,7 +75,7 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "read_repository_file",
-      description: "Read one file from a public GitHub repository.",
+      description: "Read one exact raw file from a public GitHub repository. For compatibility, incoming githubgetfile calls with filePath are also accepted.",
       parameters: {
         type: "object",
         properties: {
@@ -274,9 +275,18 @@ async function executeTool(
       return readWebPage(asString(input.url));
     case "list_repository_files":
     case "read_repository_file":
+    case "githubgetfile":
     case "inspect_repository":
     case "validate_github_connection":
-      return callRepositoryMcpTool(name, name === "validate_github_connection" ? {} : { ...input, repository });
+      if (name === "validate_github_connection") return callRepositoryMcpTool(name, {});
+      if (name === "githubgetfile") {
+        return callRepositoryMcpTool("githubgetfile", {
+          repository,
+          filePath: asString(input.filePath) || asString(input.path),
+          ...(typeof input.ref === "string" ? { ref: input.ref } : {}),
+        });
+      }
+      return callRepositoryMcpTool(name, { ...input, repository });
     default:
       return `Unknown tool: ${name || "(unnamed)"}.`;
   }

@@ -18,6 +18,7 @@ const REPOSITORY_TOOLS = new Set([
   "inspect_repository",
   "list_repository_files",
   "read_repository_file",
+  "githubgetfile",
   "validate_github_connection",
 ]);
 
@@ -69,6 +70,22 @@ function createRepositoryMcpServer(accessToken: string | null) {
     },
     async ({ repository, limit }) => ({
       content: [{ type: "text", text: await listRepositoryTree(repository, limit ?? 400, accessToken ?? undefined) }],
+    }),
+  );
+
+  server.registerTool(
+    "githubgetfile",
+    {
+      title: "Read GitHub raw file (compatibility)",
+      description: "Compatibility alias for reading exact repository file content using the githubgetfile schema.",
+      inputSchema: {
+        repository: z.string().min(1).max(500),
+        filePath: z.string().min(1).max(500),
+        ref: z.string().min(1).max(200).optional(),
+      },
+    },
+    async ({ repository, filePath, ref }) => ({
+      content: [{ type: "text", text: await readRepositoryFile(repository, filePath, accessToken ?? undefined, ref) }],
     }),
   );
 

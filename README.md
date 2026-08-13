@@ -89,7 +89,7 @@ All Jules traffic is proxied; the browser never holds a key.
 
 ### Repository MCP tools
 
-The research agent uses an in-process read-only MCP server. It exposes `validate_github_connection`, `list_repository_files`, `inspect_repository`, and `read_repository_file`. The last tool retrieves the exact text from `raw.githubusercontent.com`, reports the repository, ref, path, source, and truncation state, and accepts an optional branch, tag, or commit SHA. The agent is instructed to list files first and use the raw-file tool rather than infer content from filenames or summaries.
+The research agent uses an in-process read-only MCP server. It exposes `validate_github_connection`, `list_repository_files`, `inspect_repository`, and `read_repository_file`. The server also accepts the external `githubgetfile` compatibility schema, mapping `repository`, `filePath`, and `ref` to the same exact raw-file reader. The reader retrieves text from `raw.githubusercontent.com`, reports the repository, ref, path, source, and truncation state, and accepts an optional branch, tag, or commit SHA. The agent is instructed to list files first and use the raw-file tool rather than infer content from filenames or summaries.
 
 ### Notes on the upstream API
 
