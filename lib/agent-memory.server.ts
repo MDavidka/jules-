@@ -22,6 +22,11 @@ export const MEMORY_BLOCK_INSTRUCTIONS = [
   "When the user's project context is already stored, do not duplicate it. Only add genuinely new information.",
 ].join(" ");
 
+export interface MemorySaveResult {
+  saved: number;
+  error?: string;
+}
+
 interface ParsedCard {
   title: string;
   content: string;
@@ -34,12 +39,14 @@ interface ParsedCard {
  * Persists the cards from a memory block. Titles referenced in `connections`
  * are resolved to note ids after insertion so the board can draw links.
  *
- * Returns the number of notes created; parsing problems are swallowed because a
- * malformed block must never break the user's reply.
+ * Returns the number of notes created and a safe error message when parsing or
+ * database persistence fails. A malformed block never breaks the user's reply.
  */
-export async function saveMemoryCards(block: string | null, source: string | null): Promise<number> {
+export async function saveMemoryCards(block: string | null, source: string | null): Promise<MemorySaveResult> {
   const cards = parseMemoryBlock(block);
-  if (cards.length === 0) return 0;
+  if (cards.length === 0) {
+    return block ? { saved: 0, error: "The assistant memory block could not be parsed." } : { saved: 0 };
+  }
 
   try {
     await connectToDatabase();
@@ -71,9 +78,13 @@ export async function saveMemoryCards(block: string | null, source: string | nul
       }),
     );
 
-    return created.length;
-  } catch {
-    return 0;
+    return { saved: created.length };
+  } catch (error) {
+    console.error(
+      "Automatic memory persistence failed:",
+      error instanceof Error ? error.message : "unknown database error",
+    );
+    return { saved: 0, error: "Memory could not be saved to the database." };
   }
 }
 

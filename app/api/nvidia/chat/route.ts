@@ -322,8 +322,9 @@ export async function POST(request: Request) {
           const memoryBlock = memoryFilter.memoryBlock();
           if (memoryBlock) {
             sendStatus("saving");
-            const saved = await saveMemoryCards(memoryBlock, source || null);
-            if (saved > 0) send({ type: "memory", saved });
+            const memoryResult = await saveMemoryCards(memoryBlock, source || null);
+            if (memoryResult.saved > 0) send({ type: "memory", saved: memoryResult.saved });
+            if (memoryResult.error) send({ type: "memory_error", message: memoryResult.error });
           }
 
           // Save conversation messages for agentic memory

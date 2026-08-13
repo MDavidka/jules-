@@ -86,6 +86,7 @@ function ConfiguredApp() {
   const [assistantMessages, setAssistantMessages] = React.useState<AssistantMessage[]>([]);
   const [assistantPending, setAssistantPending] = React.useState(false);
   const [assistantActivity, setAssistantActivity] = React.useState<AgentActivity>("thinking");
+  const [memorySaveError, setMemorySaveError] = React.useState<string | null>(null);
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
 
   const [navOpen, setNavOpen] = React.useState(false);
@@ -193,6 +194,7 @@ function ConfiguredApp() {
       })
       .join("\n");
     setAssistantPending(true);
+    setMemorySaveError(null);
     setAssistantActivity("thinking");
     setAssistantMessages((current) => [...current, { role: "user", content: displayPrompt }, { role: "assistant", content: "" }]);
 
@@ -256,6 +258,9 @@ function ConfiguredApp() {
             break;
           case "memory":
             if (typeof event.saved === "number") savedMemoryCount += event.saved;
+            break;
+          case "memory_error":
+            setMemorySaveError(typeof event.message === "string" ? event.message : "Memory could not be saved.");
             break;
           case "jules_fix_proposal": {
             const proposal = parseJulesFixProposal(event.proposal);
@@ -362,7 +367,18 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
+            <>
+              {memorySaveError ? (
+                <div className="mx-auto w-full max-w-3xl px-3 pt-3 lg:px-0">
+                  <Alert variant="destructive">
+                    <TriangleAlert aria-hidden="true" />
+                    <AlertTitle>Memory was not saved</AlertTitle>
+                    <AlertDescription>{memorySaveError}</AlertDescription>
+                  </Alert>
+                </div>
+              ) : null}
+              <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
+            </>
           ) : (
             <div className={cn(
               "mx-auto w-full flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10",
