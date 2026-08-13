@@ -418,7 +418,7 @@ export function TaskComposer({
               <div className="mb-2 flex items-center gap-2 px-1">
                 <Github className="h-4 w-4 shrink-0 text-foreground" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground">Research repositories</p>
+                  <p className="text-sm font-medium text-foreground">Jules DeepDive repositories</p>
                   <p className="truncate text-[11px] text-muted-foreground">The agent will compare selected codebases.</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-muted-foreground">

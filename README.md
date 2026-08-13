@@ -1,8 +1,8 @@
-# Jules+
+# Jules DeepDive
 
-A mobile-first dashboard for the [Google Jules](https://jules.google.com) coding agent. Start tasks, approve plans, and follow live progress across your repositories.
+A mobile-first research workspace for the [Google Jules](https://jules.google.com) coding agent. Investigate repositories, start tasks, approve plans, and follow live progress.
 
-Jules+ talks to the **real Jules API** (`https://jules.googleapis.com/v1alpha`). There is no mocked session or repository data anywhere in the app: every control calls a route handler, which calls Jules.
+Jules DeepDive talks to the **real Jules API** (`https://jules.googleapis.com/v1alpha`). There is no mocked session or repository data anywhere in the app: every control calls a route handler, which calls Jules.
 
 ## Stack
 

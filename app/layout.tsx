@@ -6,10 +6,15 @@ import { Providers } from "@/app/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Jules+ · Async coding agent dashboard",
+  title: "Jules DeepDive · Async coding agent dashboard",
   description:
-    "A mobile-first dashboard for the Google Jules coding agent: start tasks, approve plans, and follow live progress across your repositories.",
-  applicationName: "Jules+",
+    "Jules DeepDive is a mobile-first research workspace for the Google Jules coding agent: investigate repositories, start tasks, approve plans, and follow live progress.",
+  applicationName: "Jules DeepDive",
+  icons: {
+    icon: [{ url: "/jules-octopus.jpeg", type: "image/jpeg" }],
+    shortcut: [{ url: "/jules-octopus.jpeg", type: "image/jpeg" }],
+    apple: [{ url: "/jules-octopus.jpeg", type: "image/jpeg" }],
+  },
   robots: { index: false, follow: false },
 };
 

@@ -28,7 +28,7 @@ export function BrandLockup({ className }: { className?: string }) {
   return (
     <span className={cn("flex items-center gap-3", className)}>
       <BrandMark className="h-10 w-10" iconClassName="h-6 w-6" />
-      <span className="text-2xl font-bold tracking-tight text-foreground">Jules+</span>
+      <span className="text-2xl font-bold tracking-tight text-foreground">Jules DeepDive</span>
     </span>
   );
 }

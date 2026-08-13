@@ -507,7 +507,7 @@ function FullScreenLoader() {
         <BrandMark className="h-12 w-12" iconClassName="h-7 w-7" />
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Starting Jules+…
+          Starting Jules DeepDive…
         </p>
       </div>
       <p aria-live="polite" className="sr-only">
