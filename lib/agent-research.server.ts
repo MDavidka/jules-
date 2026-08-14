@@ -20,6 +20,8 @@ const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
   githubgetfile: "inspecting",
   inspect_repository: "inspecting",
   validate_github_connection: "inspecting",
+  ssh_execute_command: "working",
+  ssh_write_file: "working",
 };
 
 /** OpenAI-compatible tool definitions advertised to the model. */
@@ -98,6 +100,39 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "ssh_execute_command",
+      description: "Execute a command on a saved SSH instance. Read-only commands may run immediately; privileged or destructive commands return a pending approval request.",
+      parameters: {
+        type: "object",
+        properties: {
+          instanceId: { type: "string", description: "Saved SSH instance ID." },
+          command: { type: "string", description: "Command to execute." },
+          runAsRoot: { type: "boolean", description: "Request root privileges; critical actions require approval." },
+        },
+        required: ["instanceId", "command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ssh_write_file",
+      description: "Request a complete file replacement on a saved SSH instance. Always requires explicit approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          instanceId: { type: "string", description: "Saved SSH instance ID." },
+          path: { type: "string", description: "Absolute remote file path." },
+          content: { type: "string", description: "Complete replacement file content." },
+          runAsRoot: { type: "boolean", description: "Request root privileges." },
+        },
+        required: ["instanceId", "path", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "inspect_repository",
       description: "Get a repository overview: metadata, README, and dependency manifests.",
       parameters: {
@@ -159,9 +194,9 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
       role: "system",
       content: [
         "You are the research stage of a coding assistant.",
-        "Investigate the user's request using the provided tools before anyone answers.",
+        "Answer directly when no remote inspection is needed. Use the provided tools only when the request requires evidence or an SSH operation.",
         "Work in small steps: validate the connected GitHub account when repository access matters, list repository files before reading them, and search the web before reading a page.",
-        "When checking code, use read_repository_file to retrieve the exact raw file content and include the ref returned by the tool in your reasoning; do not infer file contents from filenames or summaries.",
+        "When checking code, use read_repository_file to retrieve exact raw file content. For SSH work, use only saved instance IDs; never ask for or repeat passwords, and treat pending approval as a hard stop until the user approves it.",
         source ? `The user's currently selected repository is: ${source}` : "",
         "When you have enough evidence, stop calling tools and reply with concise bullet-point findings.",
         "Include concrete file paths, versions, commands, and URLs you actually saw. Never invent details.",
@@ -273,6 +308,9 @@ async function executeTool(
       return searchWeb(asString(input.query));
     case "read_web_page":
       return readWebPage(asString(input.url));
+    case "ssh_execute_command":
+    case "ssh_write_file":
+      return callRepositoryMcpTool(name, input);
     case "list_repository_files":
     case "read_repository_file":
     case "githubgetfile":

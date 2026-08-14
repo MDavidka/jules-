@@ -114,6 +114,82 @@ export const AppProfile: Model<AppProfileDoc> =
   mongoose.model<AppProfileDoc>("AppProfile", AppProfileSchema);
 
 /* -------------------------------------------------------------------------- */
+/*                              SSH instance model                            */
+/* -------------------------------------------------------------------------- */
+
+export interface SshInstanceDoc {
+  _id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  passwordEncrypted: string;
+  passwordIv: string;
+  passwordAuthTag: string;
+  lastConnectedAt?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const SshInstanceSchema = new Schema<SshInstanceDoc>(
+  {
+    _id: { type: String, required: true },
+    name: { type: String, required: true, trim: true, maxlength: 120 },
+    host: { type: String, required: true, trim: true, maxlength: 255 },
+    port: { type: Number, required: true, min: 1, max: 65535, default: 22 },
+    username: { type: String, required: true, trim: true, maxlength: 120, default: "root" },
+    passwordEncrypted: { type: String, required: true },
+    passwordIv: { type: String, required: true },
+    passwordAuthTag: { type: String, required: true },
+    lastConnectedAt: { type: Date, default: null },
+  },
+  { timestamps: true, versionKey: false, _id: false },
+);
+
+export const SshInstance: Model<SshInstanceDoc> =
+  (mongoose.models.SshInstance as Model<SshInstanceDoc>) ?? mongoose.model<SshInstanceDoc>("SshInstance", SshInstanceSchema);
+
+export interface SshApprovalDoc {
+  _id: string;
+  instanceId: string;
+  kind: "command" | "write_file";
+  command?: string | null;
+  path?: string | null;
+  content?: string | null;
+  runAsRoot: boolean;
+  critical: boolean;
+  status: "pending" | "approved" | "rejected" | "completed" | "failed";
+  output?: string;
+  errorOutput?: string;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const SshApprovalSchema = new Schema<SshApprovalDoc>(
+  {
+    _id: { type: String, required: true },
+    instanceId: { type: String, required: true, index: true },
+    kind: { type: String, enum: ["command", "write_file"], required: true },
+    command: { type: String, default: null, maxlength: 10000 },
+    path: { type: String, default: null, maxlength: 2000 },
+    content: { type: String, default: null, maxlength: 200000 },
+    runAsRoot: { type: Boolean, default: false },
+    critical: { type: Boolean, default: true },
+    status: { type: String, enum: ["pending", "approved", "rejected", "completed", "failed"], required: true, index: true },
+    output: { type: String, default: "" },
+    errorOutput: { type: String, default: "" },
+    exitCode: { type: Number, default: null },
+    durationMs: { type: Number, default: null },
+  },
+  { timestamps: true, versionKey: false, _id: false },
+);
+
+export const SshApproval: Model<SshApprovalDoc> =
+  (mongoose.models.SshApproval as Model<SshApprovalDoc>) ?? mongoose.model<SshApprovalDoc>("SshApproval", SshApprovalSchema);
+
+/* -------------------------------------------------------------------------- */
 /*                               Memory model                                 */
 /* -------------------------------------------------------------------------- */
 
