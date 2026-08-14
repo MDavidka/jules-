@@ -1,7 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import * as React from "react";
 
+import { BrandMark } from "@/components/layout/brand-mark";
 import { cn } from "@/lib/utils";
 
 type Block =
@@ -49,16 +51,16 @@ function MarkdownBlock({ block }: { block: Block }) {
       return <p className="whitespace-pre-wrap break-words">{renderInline(block.lines.join("\n"), `p-${block.lines[0]}`)}</p>;
     case "list":
       return block.ordered ? (
-        <ol className="list-decimal space-y-1 pl-6 marker:font-bold marker:text-primary">
+        <ol className="list-decimal space-y-1 pl-6 marker:font-bold marker:text-muted-foreground">
           {block.items.map((item, index) => <li key={index} className="pl-1">{renderInline(item, `ol-${index}`)}</li>)}
         </ol>
       ) : (
-        <ul className="list-disc space-y-1 pl-6 marker:text-primary">
+        <ul className="list-disc space-y-1 pl-6 marker:text-muted-foreground">
           {block.items.map((item, index) => <li key={index} className="pl-1">{renderInline(item, `ul-${index}`)}</li>)}
         </ul>
       );
     case "quote":
-      return <blockquote className="border-l-2 border-primary/70 bg-primary/[0.06] px-4 py-2 italic text-muted-foreground">{renderInline(block.lines.join("\n"), `quote-${block.lines[0]}`)}</blockquote>;
+      return <blockquote className="border-l-2 border-muted-foreground/50 bg-muted/30 px-4 py-2 italic text-muted-foreground">{renderInline(block.lines.join("\n"), `quote-${block.lines[0]}`)}</blockquote>;
     case "code":
       return (
         <div className="overflow-hidden rounded-xl border border-border/70 bg-black/40">
@@ -160,7 +162,7 @@ function splitTableRow(line: string) {
 
 function renderInline(value: string, keyPrefix: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|\[[^\]]+\]\([^\s)]+\)|https?:\/\/[^\s<]+|\*[^*]+\*|_[^_]+_)/g;
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|\[[^\]]+\]\([^\s)]+\)|https?:\/\/[^\s<]+|sources\/github\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+|(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])|\bJules\b|\*[^*]+\*|_[^_]+_)/gi;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let count = 0;
@@ -168,10 +170,12 @@ function renderInline(value: string, keyPrefix: string): React.ReactNode[] {
     if (match.index > lastIndex) nodes.push(value.slice(lastIndex, match.index));
     const token = match[0];
     const key = `${keyPrefix}-${count++}`;
-    if (token.startsWith("**") || token.startsWith("__")) nodes.push(<strong key={key} className="font-bold text-foreground">{token.slice(2, -2)}</strong>);
+    if (/^Jules$/i.test(token)) nodes.push(<span key={key} className="inline-flex items-center gap-1 align-baseline font-medium"><BrandMark className="inline-flex h-4 w-4" iconClassName="h-4 w-4" />{token}</span>);
+    else if (isGitHubMention(token)) nodes.push(<span key={key} className="inline-flex items-center gap-1 align-baseline"><Image src="/github-svgl.svg" alt="" width={16} height={16} className="inline-block h-4 w-4 object-contain" />{/^https?:\/\//i.test(token) ? <SafeLink href={token.replace(/[.,!?;:]+$/, "")}>{token}</SafeLink> : token}</span>);
+    else if (token.startsWith("**") || token.startsWith("__")) nodes.push(<strong key={key} className="font-bold text-foreground">{token.slice(2, -2)}</strong>);
     else if (token.startsWith("~~")) nodes.push(<del key={key}>{token.slice(2, -2)}</del>);
     else if (token.startsWith("*") || token.startsWith("_")) nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
-    else if (token.startsWith("`")) nodes.push(<code key={key} className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[0.88em] text-primary">{token.slice(1, -1)}</code>);
+    else if (token.startsWith("`")) nodes.push(<code key={key} className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[0.88em] text-muted-foreground">{token.slice(1, -1)}</code>);
     else if (token.startsWith("[")) {
       const link = token.match(/^\[([^\]]+)\]\(([^\s)]+)\)$/);
       nodes.push(link ? <SafeLink key={key} href={link[2]!}>{link[1]!}</SafeLink> : token);
@@ -187,5 +191,9 @@ function renderInline(value: string, keyPrefix: string): React.ReactNode[] {
 function SafeLink({ href, children }: { href: string; children: React.ReactNode }) {
   const safe = /^(?:https?:\/\/|mailto:)/i.test(href);
   if (!safe) return <>{children}</>;
-  return <a href={href} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary">{children}</a>;
+  return <a href={href} target="_blank" rel="noopener noreferrer" className="font-medium text-muted-foreground underline decoration-muted-foreground/50 underline-offset-4 hover:text-foreground">{children}</a>;
+}
+
+function isGitHubMention(value: string) {
+  return /^https?:\/\/github\.com\//i.test(value) || /^sources\/github\//i.test(value) || /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
 }

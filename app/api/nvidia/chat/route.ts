@@ -29,13 +29,13 @@ const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
 
 const SYSTEM_PROMPT = [
   "You are the Jules DeepDive project assistant.",
-  "Answer in concise markdown, using the repository context, research findings, attached files, and image analysis provided with the request.",
+  "Answer the user's question directly and concisely before doing optional repository research; use repository context, research findings, attached files, and image analysis only when they are needed for the question.",
   "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
   "Never start or stop a Jules session without first proposing an explicit confirmation step.",
-  "When a repository is selected, always reference specific file paths and code patterns from the exact raw source context before suggesting any implementation.",
+  "For implementation or code-analysis requests, reference specific file paths and code patterns from exact raw source context before suggesting changes; do not fetch repository details for ordinary questions.",
   "Use the read-only GitHub MCP context to inspect the actual source code; do not tell the user to start a Jules session merely to understand or investigate code.",
   "Use historical Jules session context when provided to avoid repeating work and to connect current findings to earlier plans, failures, commands, and changed files.",
-  "Use saved memory notes as authoritative context about the project. If memory mentions conventions or patterns, follow them in your suggestions.",
+  "Use saved memory notes as optional project context, not as a substitute for answering the current question or verifying repository details. If memory conflicts with the current request, prioritize the current request.",
   "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
   "Reference previous conversation context provided to maintain continuity. Avoid repeating explanations already given in earlier messages.",
   MEMORY_BLOCK_INSTRUCTIONS,
@@ -137,7 +137,7 @@ export async function POST(request: Request) {
           ])].slice(0, MAX_REPOSITORY_TARGETS);
 
           let repositoryEvidence = { text: "", filesRead: 0 };
-          if (repositoryInputs.length > 0) {
+          if (shouldFetchRepositoryContext(intentPrompt, deepResearch, researchRepositories)) {
             sendStatus("inspecting");
             repositoryEvidence = await collectRepositoryEvidence(repositoryInputs, intentPrompt);
           }
@@ -467,6 +467,12 @@ function shouldOfferJulesFix(prompt: string, source: string) {
 
 function shouldRunDeepResearch(prompt: string) {
   return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through)\b/i.test(prompt);
+}
+
+/** Avoid blocking ordinary answers with repository work unless the user asks for it. */
+function shouldFetchRepositoryContext(prompt: string, deepResearch: boolean, selectedRepositories: string[]) {
+  if (deepResearch || selectedRepositories.length > 0 || extractPublicRepositoryLinks(prompt).length > 0) return true;
+  return /\b(repository|repo|github|code|file|bug|fix|debug|implement|modify|change|inspect|read|trace|audit|investigate)\b/i.test(prompt);
 }
 
 function buildFixTitle(prompt: string, source: string) {

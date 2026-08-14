@@ -488,7 +488,7 @@ function NewTaskView({
                     <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
                   ) : null}
                   {index === messages.length - 1 && isStreaming ? (
-                    <AgentActivityIndicator activity={activity} className="mt-3" />
+                    <AgentActivityIndicator activity={activity} github={activity === "inspecting"} className="mt-3" />
                   ) : null}
                 </>
               ) : (
