@@ -21,6 +21,7 @@ import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 import {
   MAX_REPOSITORY_TARGETS,
   MAX_RESEARCH_REPOSITORIES,
+  PROMPT_MAX_LENGTH,
   sourceResourceNameSchema,
 } from "@/lib/validators";
 
@@ -509,7 +510,7 @@ function buildJulesFixPrompt({
     ? `Historical Jules session context already collected (do not repeat completed work blindly):\n${julesSessionContext.slice(0, 8_000)}`
     : "No matching historical Jules session context was available.";
 
-  return [
+  const prompt = [
     "Act as the implementation engineer for a repository fix.",
     `Repository: ${repository}`,
     `Working branch: ${selectedBranch}`,
@@ -539,6 +540,10 @@ function buildJulesFixPrompt({
     "- Existing functionality remains intact.",
     "- Verification evidence is included in the final report.",
   ].join("\n");
+
+  if (prompt.length <= PROMPT_MAX_LENGTH) return prompt;
+  const suffix = "\n\n[Repository context was truncated to fit Jules' session prompt limit.]";
+  return `${prompt.slice(0, PROMPT_MAX_LENGTH - suffix.length)}${suffix}`;
 }
 
 

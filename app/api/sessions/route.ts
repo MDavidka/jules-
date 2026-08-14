@@ -89,10 +89,21 @@ export async function GET(request: Request) {
  * Creates a new Jules session. Returns the created session immediately - the
  * work itself runs asynchronously on Jules, so this only confirms submission.
  */
+function normalizeSessionInput(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const body = value as Record<string, unknown>;
+  const source = typeof body.source === "string" ? body.source.trim() : body.source;
+  if (typeof source !== "string" || source.startsWith("sources/")) return value;
+  if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(source)) {
+    return { ...body, source: `sources/github/${source}` };
+  }
+  return value;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await parseJsonBody(request);
-    const parsed = createSessionSchema.safeParse(body);
+    const parsed = createSessionSchema.safeParse(normalizeSessionInput(body));
 
     if (!parsed.success) {
       return jsonError("The task could not be submitted.", 422, {
