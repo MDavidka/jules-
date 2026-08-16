@@ -21,7 +21,7 @@ import { JulesFixProposalCard, type JulesFixProposal } from "@/components/sessio
 import { TaskComposer, type AgentAttachment } from "@/components/sessions/task-composer";
 import { AgentActivityIndicator, isAgentActivity, type AgentActivity } from "@/components/ui/dot-matrix-loader";
 import { MarkdownContent } from "@/components/ui/markdown-content";
-import { McpSubagentTimeline, type McpActivityStep } from "@/components/ui/mcp-subagent-timeline";
+import { AgentStepTimeline, type AgentStep } from "@/components/ui/agent-step-timeline";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -66,7 +66,7 @@ type AssistantMessage = {
   role: "user" | "assistant";
   content: string;
   julesProposal?: JulesFixProposal;
-  mcpSteps?: McpActivityStep[];
+  mcpSteps?: AgentStep[];
   mcpStartedAt?: string;
 };
 
@@ -512,7 +512,7 @@ function NewTaskView({
             >
               {message.role === "assistant" ? (
                 <>
-                  {message.mcpSteps?.length ? <McpSubagentTimeline startedAt={message.mcpStartedAt ?? new Date().toISOString()} steps={message.mcpSteps} active={isStreaming && index === messages.length - 1} /> : null}
+                  {message.mcpSteps?.length ? <AgentStepTimeline className="mb-4" startedAt={message.mcpStartedAt ?? new Date().toISOString()} steps={message.mcpSteps} active={isStreaming && index === messages.length - 1} /> : null}
                   {message.content ? <MarkdownContent>{message.content}</MarkdownContent> : null}
                   {message.julesProposal ? (
                     <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
@@ -532,19 +532,22 @@ function NewTaskView({
   );
 }
 
-function parseMcpStep(value: unknown): McpActivityStep | null {
+const AGENT_STEP_PROVIDERS = ["git", "jules", "instance", "thinking"] as const;
+const AGENT_STEP_STATUSES = ["running", "completed", "waiting_approval", "failed", "skipped"] as const;
+
+function parseMcpStep(value: unknown): AgentStep | null {
   if (!value || typeof value !== "object") return null;
   const step = value as Record<string, unknown>;
   if (typeof step.id !== "string" || typeof step.provider !== "string" || typeof step.tool !== "string" || typeof step.title !== "string" || typeof step.status !== "string" || typeof step.startedAt !== "string") return null;
-  if (step.provider !== "git" && step.provider !== "jules" && step.provider !== "instance") return null;
-  if (!["running", "completed", "waiting_approval", "failed", "skipped"].includes(step.status)) return null;
+  if (!(AGENT_STEP_PROVIDERS as readonly string[]).includes(step.provider)) return null;
+  if (!(AGENT_STEP_STATUSES as readonly string[]).includes(step.status)) return null;
   const stringArray = Array.isArray(step.files) ? step.files.filter((item): item is string => typeof item === "string").slice(0, 20) : undefined;
   return {
     id: step.id,
-    provider: step.provider,
+    provider: step.provider as AgentStep["provider"],
     tool: step.tool,
     title: step.title,
-    status: step.status as McpActivityStep["status"],
+    status: step.status as AgentStep["status"],
     startedAt: step.startedAt,
     ...(typeof step.completedAt === "string" ? { completedAt: step.completedAt } : {}),
     ...(typeof step.repository === "string" ? { repository: step.repository } : {}),
@@ -552,6 +555,7 @@ function parseMcpStep(value: unknown): McpActivityStep | null {
     ...(stringArray?.length ? { files: stringArray } : {}),
     ...(typeof step.sessionLabel === "string" ? { sessionLabel: step.sessionLabel } : {}),
     ...(typeof step.instanceName === "string" ? { instanceName: step.instanceName } : {}),
+    ...(typeof step.instanceType === "string" ? { instanceType: step.instanceType } : {}),
     ...(typeof step.username === "string" ? { username: step.username } : {}),
     ...(typeof step.host === "string" ? { host: step.host } : {}),
     ...(typeof step.port === "number" ? { port: step.port } : {}),

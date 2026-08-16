@@ -3,6 +3,7 @@ import "server-only";
 import mongoose, { Schema, type Model } from "mongoose";
 
 import { ConfigurationError } from "@/lib/crypto.server";
+import { DEFAULT_INSTANCE_TYPE } from "@/lib/instance-types";
 
 /**
  * Mongoose connection + models. Server-only.
@@ -123,6 +124,8 @@ export interface SshInstanceDoc {
   host: string;
   port: number;
   username: string;
+  /** Operating system family, canonicalised by lib/instance-types.ts. */
+  instanceType: string;
   passwordEncrypted: string;
   passwordIv: string;
   passwordAuthTag: string;
@@ -138,6 +141,8 @@ const SshInstanceSchema = new Schema<SshInstanceDoc>(
     host: { type: String, required: true, trim: true, maxlength: 255 },
     port: { type: Number, required: true, min: 1, max: 65535, default: 22 },
     username: { type: String, required: true, trim: true, maxlength: 120, default: "root" },
+    // Instances saved before instance types existed read back as "linux".
+    instanceType: { type: String, required: true, trim: true, maxlength: 60, default: DEFAULT_INSTANCE_TYPE },
     passwordEncrypted: { type: String, required: true },
     passwordIv: { type: String, required: true },
     passwordAuthTag: { type: String, required: true },

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { normalizeInstanceType } from "@/lib/instance-types";
 import { AUTOMATION_MODES } from "@/types/jules";
 
 /**
@@ -102,6 +103,14 @@ export const sshInstanceSchema = z.object({
   host: z.string().trim().min(1).max(255),
   port: z.coerce.number().int().min(1).max(65535).default(22),
   username: z.string().trim().min(1).max(120).default("root"),
+  // Accepts a picker value or a raw distro string, and always stores a
+  // canonical instance type so the timeline can pick the right logo.
+  instanceType: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .transform((value) => normalizeInstanceType(value)),
   password: z.string().min(1).max(1000),
 });
 

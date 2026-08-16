@@ -75,6 +75,17 @@
   }
 }
 
+@layer components {
+  /* Shared form control, mirroring components/ui/input.tsx for plain
+     inputs, selects and textareas. */
+  .field {
+    @apply flex min-h-11 w-full rounded-lg border border-input bg-black/30 px-3 py-2 text-base text-foreground shadow-sm transition-colors;
+    @apply placeholder:text-muted-foreground/70;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+}
+
 @layer utilities {
   /* Safe-area helpers for the fixed mobile composer. */
   .pb-safe {
