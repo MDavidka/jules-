@@ -8,8 +8,8 @@ import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import type { AgentActivity } from "@/lib/agent-activity";
 
 /** Hard ceiling on tool-calling rounds, so a confused model cannot loop forever. */
-const MAX_STEPS = 4;
-const MAX_TOOL_CALLS_PER_STEP = 2;
+const MAX_STEPS = 8;
+const MAX_TOOL_CALLS_PER_STEP = 3;
 const STEP_TIMEOUT_MS = 25_000;
 
 const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
@@ -198,6 +198,7 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
         "Work in small steps: validate the connected GitHub account when repository access matters, list repository files before reading them, and search the web before reading a page.",
         "When checking code, use read_repository_file to retrieve exact raw file content. For SSH work, use only saved instance IDs; never ask for or repeat passwords, and treat pending approval as a hard stop until the user approves it.",
         source ? `The user's currently selected repository is: ${source}` : "",
+        "For VPS requests, continue through a bounded multi-step workflow when each next step depends on the previous result. Stop immediately on a pending approval response, an error, or after the step budget.",
         "When you have enough evidence, stop calling tools and reply with concise bullet-point findings.",
         "Include concrete file paths, versions, commands, and URLs you actually saw. Never invent details.",
       ]

@@ -14,6 +14,7 @@ import {
 } from "@/lib/jules-client.server";
 import type { NormalizedActivity, NormalizedSession } from "@/types/jules";
 import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
+import { listSshInstances } from "@/lib/ssh.server";
 import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import { errorMessage } from "@/lib/utils";
@@ -35,6 +36,8 @@ const SYSTEM_PROMPT = [
   "Never start or stop a Jules session without first proposing an explicit confirmation step.",
   "For implementation or code-analysis requests, reference specific file paths and code patterns from exact raw source context before suggesting changes; do not fetch repository details for ordinary questions.",
   "Use the read-only GitHub MCP context to inspect the actual source code; do not tell the user to start a Jules session merely to understand or investigate code.",
+  "You have VPS access through the saved SSH instances listed in the request context. Use the SSH MCP tools for instance operations, never ask for passwords, and keep critical commands and all file edits pending until the user approves them.",
+  "For a requested VPS task, you may execute a bounded multi-step workflow on the selected instance, recording each result and stopping immediately when approval is required or the step budget is reached.",
   "Use historical Jules session context when provided to avoid repeating work and to connect current findings to earlier plans, failures, commands, and changed files.",
   "Use saved memory notes as optional project context, not as a substitute for answering the current question or verifying repository details. If memory conflicts with the current request, prioritize the current request.",
   "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
@@ -69,6 +72,7 @@ export async function POST(request: Request) {
       attachments?: unknown;
       researchRepositories?: unknown;
       deepResearch?: unknown;
+      instanceId?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     const requestedModel = typeof body.model === "string" ? body.model : "";
@@ -120,6 +124,16 @@ export async function POST(request: Request) {
         try {
           sendStatus("thinking");
 
+          let sshInstancesContext = "";
+          try {
+            const sshInstances = await listSshInstances();
+            if (sshInstances.length > 0) {
+              sshInstancesContext = `Available VPS instances for agent operations:\n${sshInstances.map((instance) => `- instanceId=${instance.id}; name=${instance.name}; target=${instance.username}@${instance.host}:${instance.port}`).join("\n")}\nUse only these instance IDs. Passwords are stored server-side and are never available to the model.`;
+            }
+          } catch {
+            // VPS context is optional; a missing database must not block ordinary answers.
+          }
+
           const fileContext = attachments
             .filter((attachment) => attachment.content)
             .map((attachment) => `Attached file: ${attachment.name}\n${attachment.content}`)
@@ -151,8 +165,8 @@ export async function POST(request: Request) {
             const findings = await Promise.all(
               deepTargets.map(async (repository) => {
                 const scopedPrompt = repository
-                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request. Exact source files must be read before you summarize:\n${intentPrompt}`
-                  : intentPrompt;
+                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request. Exact source files must be read before you summarize:\n${intentPrompt}\n\n${sshInstancesContext}`
+                  : `${intentPrompt}\n\n${sshInstancesContext}`;
                 return {
                   repository,
                   findings: await runDeepResearch({
@@ -221,6 +235,7 @@ export async function POST(request: Request) {
             repositoryEvidence.text,
             deepFindings,
             julesSessionContext,
+            sshInstancesContext,
             fileContext,
             imageContext,
           ]
