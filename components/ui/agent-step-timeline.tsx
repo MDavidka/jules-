@@ -47,6 +47,7 @@ interface AgentStepTimelineProps {
   /** Overrides the heading, which otherwise tracks the newest step. */
   title?: string;
   className?: string;
+  onApprovalComplete?: (step: AgentStep, result: { status: string; output?: string; errorOutput?: string }) => void;
 }
 
 const MAX_VISIBLE_FILES = 6;
@@ -61,7 +62,7 @@ const MAX_VISIBLE_FILES = 6;
  * Rows stay deliberately quiet: status is carried by the rail node's colour, and
  * a status label only appears when a step needs attention.
  */
-export function AgentStepTimeline({ startedAt, steps, active, title, className }: AgentStepTimelineProps) {
+export function AgentStepTimeline({ startedAt, steps, active, title, className, onApprovalComplete }: AgentStepTimelineProps) {
   const latest = steps[steps.length - 1];
   // The heading names the task, so it stays on the first step rather than
   // flickering through every tool call underneath it.
@@ -88,7 +89,7 @@ export function AgentStepTimeline({ startedAt, steps, active, title, className }
           {/* Rail, tucked behind the opaque nodes at both ends. */}
           <span className="absolute bottom-[5px] left-[5px] top-1 w-px bg-white/[0.13]" aria-hidden="true" />
           {steps.map((step) => (
-            <AgentStepRow key={step.id} step={step} />
+            <AgentStepRow key={step.id} step={step} onApprovalComplete={onApprovalComplete} />
           ))}
           {/* Terminal node, so the rail reads as finished rather than cut off. */}
           <span
@@ -101,7 +102,7 @@ export function AgentStepTimeline({ startedAt, steps, active, title, className }
   );
 }
 
-function AgentStepRow({ step }: { step: AgentStep }) {
+function AgentStepRow({ step, onApprovalComplete }: { step: AgentStep; onApprovalComplete?: AgentStepTimelineProps["onApprovalComplete"] }) {
   const [showOutput, setShowOutput] = React.useState(false);
   const [showAllFiles, setShowAllFiles] = React.useState(false);
   const [approvalState, setApprovalState] = React.useState<"idle" | "submitting" | "approved" | "rejected" | "error">("idle");
@@ -132,6 +133,11 @@ function AgentStepRow({ step }: { step: AgentStep }) {
       if (!response.ok) throw new Error(result?.message || "The approval request failed.");
       setApprovalState(result?.status === "rejected" ? "rejected" : "approved");
       setApprovalOutput(result?.output || result?.errorOutput || (approved ? "Action completed." : "Action rejected."));
+      onApprovalComplete?.(step, {
+        status: result?.status || (approved ? "completed" : "rejected"),
+        ...(result?.output ? { output: result.output } : {}),
+        ...(result?.errorOutput ? { errorOutput: result.errorOutput } : {}),
+      });
     } catch (error) {
       setApprovalState("error");
       setApprovalOutput(error instanceof Error ? error.message : "The approval request failed.");

@@ -345,6 +345,27 @@ function ConfiguredApp() {
     }
   };
 
+  const handleApprovalComplete = React.useCallback((step: AgentStep, result: { status: string; output?: string; errorOutput?: string }) => {
+    setAssistantMessages((current) => current.map((message) => ({
+      ...message,
+      mcpSteps: message.mcpSteps?.map((item) => item.id === step.id ? {
+        ...item,
+        status: result.status === "completed" ? "completed" : result.status === "rejected" ? "failed" : "failed",
+        completedAt: new Date().toISOString(),
+        output: result.output || result.errorOutput || item.output,
+      } : item),
+    })));
+
+    if (result.status === "completed") {
+      const terminalOutput = (result.output || "").slice(0, 6000);
+      void handleSubmitTask(
+        `The approved VM command has completed. Continue the original request using this terminal result, do not repeat the command, and return a clear user-facing answer.\n\nTerminal result:\n${terminalOutput}`,
+        [],
+        [],
+      );
+    }
+  }, [handleSubmitTask]);
+
   const handleRefresh = () => {
     void sourcesQuery.refetch();
     void sessionsQuery.refetch();
@@ -406,7 +427,7 @@ function ConfiguredApp() {
                   </Alert>
                 </div>
               ) : null}
-              <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
+              <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} onApprovalComplete={handleApprovalComplete} />
             </>
           ) : (
             <div className={cn(
@@ -484,12 +505,14 @@ function NewTaskView({
   activity,
   composerHeight,
   onSessionCreated,
+  onApprovalComplete,
 }: {
   messages: AssistantMessage[];
   isStreaming: boolean;
   activity: AgentActivity;
   composerHeight: number;
   onSessionCreated: (sessionName: string) => void;
+  onApprovalComplete: (step: AgentStep, result: { status: string; output?: string; errorOutput?: string }) => void;
 }) {
   return (
     <div
@@ -512,7 +535,7 @@ function NewTaskView({
             >
               {message.role === "assistant" ? (
                 <>
-                  {message.mcpSteps?.length ? <AgentStepTimeline className="mb-4" startedAt={message.mcpStartedAt ?? new Date().toISOString()} steps={message.mcpSteps} active={isStreaming && index === messages.length - 1} /> : null}
+                  {message.mcpSteps?.length ? <AgentStepTimeline className="mb-4" startedAt={message.mcpStartedAt ?? new Date().toISOString()} steps={message.mcpSteps} active={isStreaming && index === messages.length - 1} onApprovalComplete={onApprovalComplete} /> : null}
                   {message.content ? <MarkdownContent>{message.content}</MarkdownContent> : null}
                   {message.julesProposal ? (
                     <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
@@ -555,6 +578,7 @@ function parseMcpStep(value: unknown): AgentStep | null {
     ...(stringArray?.length ? { files: stringArray } : {}),
     ...(typeof step.sessionLabel === "string" ? { sessionLabel: step.sessionLabel } : {}),
     ...(typeof step.instanceName === "string" ? { instanceName: step.instanceName } : {}),
+    ...(typeof step.actionId === "string" ? { actionId: step.actionId } : {}),
     ...(typeof step.instanceType === "string" ? { instanceType: step.instanceType } : {}),
     ...(typeof step.username === "string" ? { username: step.username } : {}),
     ...(typeof step.host === "string" ? { host: step.host } : {}),
