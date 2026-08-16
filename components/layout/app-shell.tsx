@@ -559,6 +559,7 @@ function parseMcpStep(value: unknown): AgentStep | null {
     ...(typeof step.username === "string" ? { username: step.username } : {}),
     ...(typeof step.host === "string" ? { host: step.host } : {}),
     ...(typeof step.port === "number" ? { port: step.port } : {}),
+    ...(typeof step.actionId === "string" ? { actionId: step.actionId } : {}),
     ...(typeof step.command === "string" ? { command: step.command } : {}),
     ...(typeof step.output === "string" ? { output: step.output } : {}),
   };

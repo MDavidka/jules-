@@ -30,19 +30,16 @@ import {
 const MODEL_IDS: ReadonlySet<string> = new Set(NVIDIA_MODELS.map((item) => item.id));
 const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
 
-const SYSTEM_PROMPT = [
-  "You are the Jules DeepDive project assistant.",
-  "Answer the user's question directly and concisely before doing optional repository research; use repository context, research findings, attached files, and image analysis only when they are needed for the question.",
-  "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
-  "Never start or stop a Jules session without first proposing an explicit confirmation step.",
-  "For implementation or code-analysis requests, reference specific file paths and code patterns from exact raw source context before suggesting changes; do not fetch repository details for ordinary questions.",
-  "Use the read-only GitHub MCP context to inspect the actual source code; do not tell the user to start a Jules session merely to understand or investigate code.",
-  "You have VPS access through the saved SSH instances listed in the request context. Use the SSH MCP tools for instance operations, never ask for passwords, and keep critical commands and all file edits pending until the user approves them.",
-  "For a requested VPS task, you may execute a bounded multi-step workflow on the selected instance, recording each result and stopping immediately when approval is required or the step budget is reached. VPS, SSH, server, instance, command, deploy, restart, service, process, and log requests must use the SSH tools instead of claiming that no SSH tools are connected.",
-  "Use historical Jules session context when provided to avoid repeating work and to connect current findings to earlier plans, failures, commands, and changed files.",
-  "Use saved memory notes as optional project context, not as a substitute for answering the current question or verifying repository details. If memory conflicts with the current request, prioritize the current request.",
-  "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
-  "Reference previous conversation context provided to maintain continuity. Avoid repeating explanations already given in earlier messages.",
+// The streamed completion is a summarizer, not another agent turn. Keeping
+// tool instructions out of this request prevents compatible models from
+// emitting DSML/DMSL as plain text after the real MCP loop has finished.
+const FINAL_SYSTEM_PROMPT = [
+  "You are the final response writer for the Jules DeepDive project assistant.",
+  "Answer the user's question directly and concisely using only the supplied context and verified research findings.",
+  "Do not call tools or pretend to call tools. Never emit XML, DSML, DMSL, function-call markup, or tool-call JSON.",
+  "For VPS operations, report only what the verified research trace says happened. If an action is pending approval or was not executed, say that clearly and do not claim success.",
+  "Cite concrete file paths, commands, versions, and URLs from the supplied context, and say plainly when something is unknown.",
+  "Use saved memory and prior conversation only as context, not as proof that an operation happened.",
   MEMORY_BLOCK_INSTRUCTIONS,
 ].join(" ");
 
@@ -274,7 +271,7 @@ export async function POST(request: Request) {
               model,
               stream: true,
               messages: [
-                { role: "system", content: SYSTEM_PROMPT },
+                { role: "system", content: FINAL_SYSTEM_PROMPT },
                 ...history,
                 { role: "user", content: userContent },
               ],
@@ -338,10 +335,12 @@ export async function POST(request: Request) {
           // Model providers occasionally emit their internal DSML tool protocol
           // as ordinary text. Never stream that protocol to the transcript.
           const cleanResponse = sanitizeActivityText(visibleResponse);
-          const hadDsml = /<\s*\/?\s*\|?\s*DSML\b/i.test(visibleResponse);
-          const answer = hadDsml && deepFindings.trim()
+          const hadToolProtocol = /<\s*\/?\s*\|?\s*D(?:SM|MS)L\b/i.test(visibleResponse);
+          const answer = hadToolProtocol && deepFindings.trim()
             ? `I checked the available instance.\n\n${deepFindings.trim()}`
-            : cleanResponse || (deepFindings.trim() ? `I checked the available instance.\n\n${deepFindings.trim()}` : "I could not get a readable answer from the assistant.");
+            : hadToolProtocol
+              ? "The assistant returned an unsupported tool-call format, so no unverified operation was reported. Please retry the request."
+              : cleanResponse || (deepFindings.trim() ? `I checked the available instance.\n\n${deepFindings.trim()}` : "I could not get a readable answer from the assistant.");
           fullResponse = answer;
           send({ type: "token", value: answer });
 
