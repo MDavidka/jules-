@@ -37,7 +37,7 @@ const SYSTEM_PROMPT = [
   "For implementation or code-analysis requests, reference specific file paths and code patterns from exact raw source context before suggesting changes; do not fetch repository details for ordinary questions.",
   "Use the read-only GitHub MCP context to inspect the actual source code; do not tell the user to start a Jules session merely to understand or investigate code.",
   "You have VPS access through the saved SSH instances listed in the request context. Use the SSH MCP tools for instance operations, never ask for passwords, and keep critical commands and all file edits pending until the user approves them.",
-  "For a requested VPS task, you may execute a bounded multi-step workflow on the selected instance, recording each result and stopping immediately when approval is required or the step budget is reached.",
+  "For a requested VPS task, you may execute a bounded multi-step workflow on the selected instance, recording each result and stopping immediately when approval is required or the step budget is reached. VPS, SSH, server, instance, command, deploy, restart, service, process, and log requests must use the SSH tools instead of claiming that no SSH tools are connected.",
   "Use historical Jules session context when provided to avoid repeating work and to connect current findings to earlier plans, failures, commands, and changed files.",
   "Use saved memory notes as optional project context, not as a substitute for answering the current question or verifying repository details. If memory conflicts with the current request, prioritize the current request.",
   "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
@@ -482,7 +482,7 @@ function shouldOfferJulesFix(prompt: string, source: string) {
 }
 
 function shouldRunDeepResearch(prompt: string) {
-  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through)\b/i.test(prompt);
+  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through|ssh|vps|server|instance|terminal|shell|command|deploy|deployment|restart|service|process|logs?)\b/i.test(prompt);
 }
 
 /** Avoid blocking ordinary answers with repository work unless the user asks for it. */
