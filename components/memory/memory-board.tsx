@@ -37,6 +37,7 @@ interface MemoryBoardProps {
   notes: MemoryNote[];
   className?: string;
   onSelectNote?: (noteId: string) => void;
+  onDeleteNote?: (noteId: string) => void;
 }
 
 /**
@@ -44,7 +45,7 @@ interface MemoryBoardProps {
  * Cards are laid out deterministically from note order, and `note.connections`
  * (ids of other notes) are drawn as curved links behind the cards.
  */
-export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps) {
+export function MemoryBoard({ notes, className, onSelectNote, onDeleteNote }: MemoryBoardProps) {
   const { positioned, width, height } = React.useMemo(() => layoutNotes(notes), [notes]);
   const positionById = React.useMemo(
     () => new Map(positioned.map((item) => [item.note.id, item])),
@@ -167,6 +168,7 @@ export function MemoryBoard({ notes, className, onSelectNote }: MemoryBoardProps
               note={note}
               style={{ left: x, top: y, width: CARD_WIDTH, minHeight: cardHeight }}
               onSelect={onSelectNote}
+              onDelete={onDeleteNote}
             />
           ))}
         </div>
@@ -179,10 +181,12 @@ function MemoryCard({
   note,
   style,
   onSelect,
+  onDelete,
 }: {
   note: MemoryNote;
   style: React.CSSProperties;
   onSelect?: (noteId: string) => void;
+  onDelete?: (noteId: string) => void;
 }) {
   const entries = dataEntries(note.data);
   const Icon = isGitHubConnection(note) ? Github : KIND_ICONS[note.kind] ?? StickyNote;
@@ -193,9 +197,11 @@ function MemoryCard({
       style={style}
       className={cn(
         "absolute rounded-xl border border-white/25 bg-[hsl(0_0%_18%)] px-2.5 py-2 shadow-lg shadow-black/40",
-        onSelect && "cursor-pointer transition-colors hover:border-white/40",
+        (onSelect || onDelete) && "cursor-pointer transition-colors hover:border-white/40",
       )}
+      title={onDelete ? "Click to focus. Double-click to delete." : undefined}
       onClick={onSelect ? () => onSelect(note.id) : undefined}
+      onDoubleClick={onDelete ? () => onDelete(note.id) : undefined}
     >
       <div className="flex items-start gap-1.5">
         <Icon className="mt-px h-3 w-3 shrink-0 text-foreground/80" aria-hidden="true" />

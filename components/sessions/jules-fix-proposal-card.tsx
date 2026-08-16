@@ -6,6 +6,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { useCreateSession } from "@/hooks/use-sessions";
 import { useToast } from "@/components/ui/toast";
+import { ApiError } from "@/lib/api-client";
 import { errorMessage } from "@/lib/utils";
 
 export interface JulesFixProposal {
@@ -13,6 +14,16 @@ export interface JulesFixProposal {
   source: string;
   branch?: string;
   title: string;
+}
+
+function sessionSubmissionError(error: unknown) {
+  if (error instanceof ApiError && error.details && typeof error.details === "object") {
+    const firstDetail = Object.values(error.details as Record<string, unknown>).find(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    if (firstDetail) return firstDetail;
+  }
+  return errorMessage(error);
 }
 
 interface JulesFixProposalCardProps {
@@ -51,7 +62,7 @@ export function JulesFixProposalCard({ proposal, onSessionCreated }: JulesFixPro
     } catch (error) {
       toast({
         title: "Could not start Jules fix",
-        description: errorMessage(error),
+        description: sessionSubmissionError(error),
         variant: "error",
       });
     }

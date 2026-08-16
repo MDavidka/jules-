@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import * as React from "react";
 
 import { ACTIVITY_LABELS, type AgentActivity } from "@/lib/agent-activity";
@@ -98,9 +99,11 @@ export function DotMatrixLoader({
 export function AgentActivityIndicator({
   activity,
   className,
+  github = false,
 }: {
   activity: AgentActivity;
   className?: string;
+  github?: boolean;
 }) {
   return (
     <p
@@ -108,7 +111,17 @@ export function AgentActivityIndicator({
       aria-live="polite"
       className={cn("flex items-center gap-2 text-sm font-semibold text-foreground", className)}
     >
-      <DotMatrixLoader />
+      {github ? (
+        <Image
+          src="/github-svgl.svg"
+          alt=""
+          width={16}
+          height={16}
+          className="h-4 w-4 shrink-0 object-contain"
+        />
+      ) : (
+        <DotMatrixLoader />
+      )}
       {ACTIVITY_LABELS[activity]}
     </p>
   );

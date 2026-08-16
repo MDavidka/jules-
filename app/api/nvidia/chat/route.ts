@@ -14,6 +14,7 @@ import {
 } from "@/lib/jules-client.server";
 import type { NormalizedActivity, NormalizedSession } from "@/types/jules";
 import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
+import { listSshInstances } from "@/lib/ssh.server";
 import { loadNvidiaApiKey, NVIDIA_CHAT_COMPLETIONS_URL } from "@/lib/nvidia.server";
 import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import { errorMessage } from "@/lib/utils";
@@ -21,6 +22,7 @@ import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 import {
   MAX_REPOSITORY_TARGETS,
   MAX_RESEARCH_REPOSITORIES,
+  PROMPT_MAX_LENGTH,
   sourceResourceNameSchema,
 } from "@/lib/validators";
 
@@ -29,13 +31,15 @@ const MAX_IMAGE_DATA_URL_LENGTH = 4_500_000;
 
 const SYSTEM_PROMPT = [
   "You are the Jules DeepDive project assistant.",
-  "Answer in concise markdown, using the repository context, research findings, attached files, and image analysis provided with the request.",
+  "Answer the user's question directly and concisely before doing optional repository research; use repository context, research findings, attached files, and image analysis only when they are needed for the question.",
   "Cite concrete file paths, commands, versions, and URLs from that context, and say so plainly when something is unknown.",
   "Never start or stop a Jules session without first proposing an explicit confirmation step.",
-  "When a repository is selected, always reference specific file paths and code patterns from the exact raw source context before suggesting any implementation.",
+  "For implementation or code-analysis requests, reference specific file paths and code patterns from exact raw source context before suggesting changes; do not fetch repository details for ordinary questions.",
   "Use the read-only GitHub MCP context to inspect the actual source code; do not tell the user to start a Jules session merely to understand or investigate code.",
+  "You have VPS access through the saved SSH instances listed in the request context. Use the SSH MCP tools for instance operations, never ask for passwords, and keep critical commands and all file edits pending until the user approves them.",
+  "For a requested VPS task, you may execute a bounded multi-step workflow on the selected instance, recording each result and stopping immediately when approval is required or the step budget is reached. VPS, SSH, server, instance, command, deploy, restart, service, process, and log requests must use the SSH tools instead of claiming that no SSH tools are connected.",
   "Use historical Jules session context when provided to avoid repeating work and to connect current findings to earlier plans, failures, commands, and changed files.",
-  "Use saved memory notes as authoritative context about the project. If memory mentions conventions or patterns, follow them in your suggestions.",
+  "Use saved memory notes as optional project context, not as a substitute for answering the current question or verifying repository details. If memory conflicts with the current request, prioritize the current request.",
   "When suggesting a Jules fix session, incorporate relevant memory context into the fix prompt to give Jules maximum understanding.",
   "Reference previous conversation context provided to maintain continuity. Avoid repeating explanations already given in earlier messages.",
   MEMORY_BLOCK_INSTRUCTIONS,
@@ -68,6 +72,7 @@ export async function POST(request: Request) {
       attachments?: unknown;
       researchRepositories?: unknown;
       deepResearch?: unknown;
+      instanceId?: unknown;
     };
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     const requestedModel = typeof body.model === "string" ? body.model : "";
@@ -117,7 +122,22 @@ export async function POST(request: Request) {
         const sendStatus = (activity: AgentActivity) => send({ type: "status", activity });
 
         try {
+          const sessionStartedAt = new Date().toISOString();
+          let mcpStepIndex = 0;
+          send({ type: "session_started", startedAt: sessionStartedAt });
           sendStatus("thinking");
+
+          let sshInstancesContext = "";
+          const sshInstanceMeta = new Map<string, { name: string; username: string; host: string; port: number }>();
+          try {
+            const sshInstances = await listSshInstances();
+            for (const instance of sshInstances) sshInstanceMeta.set(instance.id, { name: instance.name, username: instance.username, host: instance.host, port: instance.port });
+            if (sshInstances.length > 0) {
+              sshInstancesContext = `Available VPS instances for agent operations:\n${sshInstances.map((instance) => `- instanceId=${instance.id}; name=${instance.name}; target=${instance.username}@${instance.host}:${instance.port}`).join("\n")}\nUse only these instance IDs. Passwords are stored server-side and are never available to the model.`;
+            }
+          } catch {
+            // VPS context is optional; a missing database must not block ordinary answers.
+          }
 
           const fileContext = attachments
             .filter((attachment) => attachment.content)
@@ -137,7 +157,7 @@ export async function POST(request: Request) {
           ])].slice(0, MAX_REPOSITORY_TARGETS);
 
           let repositoryEvidence = { text: "", filesRead: 0 };
-          if (repositoryInputs.length > 0) {
+          if (shouldFetchRepositoryContext(intentPrompt, deepResearch, researchRepositories)) {
             sendStatus("inspecting");
             repositoryEvidence = await collectRepositoryEvidence(repositoryInputs, intentPrompt);
           }
@@ -150,8 +170,8 @@ export async function POST(request: Request) {
             const findings = await Promise.all(
               deepTargets.map(async (repository) => {
                 const scopedPrompt = repository
-                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request. Exact source files must be read before you summarize:\n${intentPrompt}`
-                  : intentPrompt;
+                  ? `Research only this repository: ${repository}. Use its repository tools to understand how it works, then investigate this request. Exact source files must be read before you summarize:\n${intentPrompt}\n\n${sshInstancesContext}`
+                  : `${intentPrompt}\n\n${sshInstancesContext}`;
                 return {
                   repository,
                   findings: await runDeepResearch({
@@ -160,6 +180,10 @@ export async function POST(request: Request) {
                     prompt: scopedPrompt,
                     source: repository,
                     onActivity: sendStatus,
+                    onStep: (step) => {
+                      const normalized = normalizeMcpStep(step, ++mcpStepIndex, sshInstanceMeta);
+                      send({ type: "mcp_step", step: normalized });
+                    },
                   }),
                 };
               }),
@@ -173,6 +197,21 @@ export async function POST(request: Request) {
           const julesSessionContext = source
             ? await collectRecentJulesSessionContext(repositoryInputs)
             : "";
+          if (julesSessionContext) {
+            send({
+              type: "mcp_step",
+              step: {
+                id: `jules-${++mcpStepIndex}`,
+                provider: "jules",
+                tool: "jules_session_context",
+                title: "working on Jules task",
+                status: "completed",
+                startedAt: sessionStartedAt,
+                sessionLabel: "Loaded recent Jules session context",
+                output: "Jules session history is available to the assistant.",
+              },
+            });
+          }
 
           sendStatus("working");
 
@@ -220,6 +259,7 @@ export async function POST(request: Request) {
             repositoryEvidence.text,
             deepFindings,
             julesSessionContext,
+            sshInstancesContext,
             fileContext,
             imageContext,
           ]
@@ -322,8 +362,9 @@ export async function POST(request: Request) {
           const memoryBlock = memoryFilter.memoryBlock();
           if (memoryBlock) {
             sendStatus("saving");
-            const saved = await saveMemoryCards(memoryBlock, source || null);
-            if (saved > 0) send({ type: "memory", saved });
+            const memoryResult = await saveMemoryCards(memoryBlock, source || null);
+            if (memoryResult.saved > 0) send({ type: "memory", saved: memoryResult.saved });
+            if (memoryResult.error) send({ type: "memory_error", message: memoryResult.error });
           }
 
           // Save conversation messages for agentic memory
@@ -464,8 +505,47 @@ function shouldOfferJulesFix(prompt: string, source: string) {
   );
 }
 
+function normalizeMcpStep(step: { tool: string; input: Record<string, unknown>; output: string }, index: number, instances: Map<string, { name: string; username: string; host: string; port: number }>) {
+  const tool = step.tool;
+  const provider = tool.includes("ssh") || tool.startsWith("mcp") && tool.includes("ssh") ? "instance" : tool.includes("jules") || tool.includes("session") ? "jules" : "git";
+  const input = sanitizeMcpInput(step.input);
+  const instance = typeof step.input.instanceId === "string" ? instances.get(step.input.instanceId) : undefined;
+  const repository = typeof step.input.repository === "string" ? step.input.repository.replace(/^sources\/github\//, "") : undefined;
+  const path = typeof step.input.path === "string" ? step.input.path : typeof step.input.filePath === "string" ? step.input.filePath : undefined;
+  const title = provider === "instance" ? (tool.includes("connect") ? "connecting to instance" : "running command on instances") : provider === "jules" ? "working on Jules task" : "working on repository";
+  return {
+    id: `${index}-${tool}`,
+    provider,
+    tool,
+    title,
+    status: /pending approval|approval/i.test(step.output) ? "waiting_approval" : /failed|error|unknown tool/i.test(step.output) ? "failed" : "completed",
+    startedAt: new Date().toISOString(),
+    repository,
+    ...(path ? { files: [path] } : {}),
+    ...(typeof step.input.ref === "string" ? { ref: step.input.ref } : {}),
+    ...(instance ? { instanceName: instance.name, username: instance.username, host: instance.host, port: instance.port } : {}),
+    ...(typeof step.input.command === "string" ? { command: step.input.command.slice(0, 800) } : {}),
+    output: step.output.slice(0, 1600),
+    input,
+  };
+}
+
+function sanitizeMcpInput(input: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(input).map(([key, value]) => {
+    if (key === "content") return [key, "[file content withheld from activity log]"];
+    if (typeof value === "string") return [key, value.slice(0, 500)];
+    return [key, value];
+  }));
+}
+
 function shouldRunDeepResearch(prompt: string) {
-  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through)\b/i.test(prompt);
+  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through|ssh|vps|server|instance|terminal|shell|command|deploy|deployment|restart|service|process|logs?)\b/i.test(prompt);
+}
+
+/** Avoid blocking ordinary answers with repository work unless the user asks for it. */
+function shouldFetchRepositoryContext(prompt: string, deepResearch: boolean, selectedRepositories: string[]) {
+  if (deepResearch || selectedRepositories.length > 0 || extractPublicRepositoryLinks(prompt).length > 0) return true;
+  return /\b(repository|repo|github|code|file|bug|fix|debug|implement|modify|change|inspect|read|trace|audit|investigate)\b/i.test(prompt);
 }
 
 function buildFixTitle(prompt: string, source: string) {
@@ -502,7 +582,7 @@ function buildJulesFixPrompt({
     ? `Historical Jules session context already collected (do not repeat completed work blindly):\n${julesSessionContext.slice(0, 8_000)}`
     : "No matching historical Jules session context was available.";
 
-  return [
+  const prompt = [
     "Act as the implementation engineer for a repository fix.",
     `Repository: ${repository}`,
     `Working branch: ${selectedBranch}`,
@@ -532,6 +612,10 @@ function buildJulesFixPrompt({
     "- Existing functionality remains intact.",
     "- Verification evidence is included in the final report.",
   ].join("\n");
+
+  if (prompt.length <= PROMPT_MAX_LENGTH) return prompt;
+  const suffix = "\n\n[Repository context was truncated to fit Jules' session prompt limit.]";
+  return `${prompt.slice(0, PROMPT_MAX_LENGTH - suffix.length)}${suffix}`;
 }
 
 

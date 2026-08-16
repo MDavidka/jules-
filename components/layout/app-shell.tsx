@@ -21,6 +21,7 @@ import { JulesFixProposalCard, type JulesFixProposal } from "@/components/sessio
 import { TaskComposer, type AgentAttachment } from "@/components/sessions/task-composer";
 import { AgentActivityIndicator, isAgentActivity, type AgentActivity } from "@/components/ui/dot-matrix-loader";
 import { MarkdownContent } from "@/components/ui/markdown-content";
+import { McpSubagentTimeline, type McpActivityStep } from "@/components/ui/mcp-subagent-timeline";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -65,6 +66,8 @@ type AssistantMessage = {
   role: "user" | "assistant";
   content: string;
   julesProposal?: JulesFixProposal;
+  mcpSteps?: McpActivityStep[];
+  mcpStartedAt?: string;
 };
 
 function ConfiguredApp() {
@@ -86,6 +89,7 @@ function ConfiguredApp() {
   const [assistantMessages, setAssistantMessages] = React.useState<AssistantMessage[]>([]);
   const [assistantPending, setAssistantPending] = React.useState(false);
   const [assistantActivity, setAssistantActivity] = React.useState<AgentActivity>("thinking");
+  const [memorySaveError, setMemorySaveError] = React.useState<string | null>(null);
   const [openSessionName, setOpenSessionName] = React.useState<string | null>(null);
 
   const [navOpen, setNavOpen] = React.useState(false);
@@ -193,6 +197,7 @@ function ConfiguredApp() {
       })
       .join("\n");
     setAssistantPending(true);
+    setMemorySaveError(null);
     setAssistantActivity("thinking");
     setAssistantMessages((current) => [...current, { role: "user", content: displayPrompt }, { role: "assistant", content: "" }]);
 
@@ -237,7 +242,7 @@ function ConfiguredApp() {
         const trimmed = line.trim();
         if (!trimmed) return;
 
-        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown };
+        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown; step?: unknown; startedAt?: unknown };
         try {
           event = JSON.parse(trimmed);
         } catch {
@@ -248,6 +253,32 @@ function ConfiguredApp() {
           case "status":
             if (isAgentActivity(event.activity)) setAssistantActivity(event.activity);
             break;
+          case "session_started": {
+            const startedAt = typeof event.startedAt === "string" ? event.startedAt : null;
+            if (startedAt) {
+              setAssistantMessages((current) => {
+                const next = [...current];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") next[next.length - 1] = { ...last, mcpStartedAt: startedAt };
+                return next;
+              });
+            }
+            break;
+          }
+          case "mcp_step": {
+            const step = parseMcpStep(event.step);
+            if (step) {
+              setAssistantMessages((current) => {
+                const next = [...current];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  next[next.length - 1] = { ...last, mcpSteps: [...(last.mcpSteps ?? []), step] };
+                }
+                return next;
+              });
+            }
+            break;
+          }
           case "token":
             if (typeof event.value === "string" && event.value) {
               receivedContent = true;
@@ -256,6 +287,9 @@ function ConfiguredApp() {
             break;
           case "memory":
             if (typeof event.saved === "number") savedMemoryCount += event.saved;
+            break;
+          case "memory_error":
+            setMemorySaveError(typeof event.message === "string" ? event.message : "Memory could not be saved.");
             break;
           case "jules_fix_proposal": {
             const proposal = parseJulesFixProposal(event.proposal);
@@ -362,7 +396,18 @@ function ConfiguredApp() {
 
         <main className="flex min-h-0 flex-1 flex-col">
           {activeView === "new-task" ? (
-            <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
+            <>
+              {memorySaveError ? (
+                <div className="mx-auto w-full max-w-3xl px-3 pt-3 lg:px-0">
+                  <Alert variant="destructive">
+                    <TriangleAlert aria-hidden="true" />
+                    <AlertTitle>Memory was not saved</AlertTitle>
+                    <AlertDescription>{memorySaveError}</AlertDescription>
+                  </Alert>
+                </div>
+              ) : null}
+              <NewTaskView messages={assistantMessages} isStreaming={assistantPending} activity={assistantActivity} composerHeight={composerHeight} onSessionCreated={handleOpenSession} />
+            </>
           ) : (
             <div className={cn(
               "mx-auto w-full flex-1 px-4 pb-24 pt-4 sm:px-6 lg:pb-10",
@@ -467,12 +512,13 @@ function NewTaskView({
             >
               {message.role === "assistant" ? (
                 <>
+                  {message.mcpSteps?.length ? <McpSubagentTimeline startedAt={message.mcpStartedAt ?? new Date().toISOString()} steps={message.mcpSteps} active={isStreaming && index === messages.length - 1} /> : null}
                   {message.content ? <MarkdownContent>{message.content}</MarkdownContent> : null}
                   {message.julesProposal ? (
                     <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
                   ) : null}
                   {index === messages.length - 1 && isStreaming ? (
-                    <AgentActivityIndicator activity={activity} className="mt-3" />
+                    <AgentActivityIndicator activity={activity} github={activity === "inspecting"} className="mt-3" />
                   ) : null}
                 </>
               ) : (
@@ -484,6 +530,34 @@ function NewTaskView({
       )}
     </div>
   );
+}
+
+function parseMcpStep(value: unknown): McpActivityStep | null {
+  if (!value || typeof value !== "object") return null;
+  const step = value as Record<string, unknown>;
+  if (typeof step.id !== "string" || typeof step.provider !== "string" || typeof step.tool !== "string" || typeof step.title !== "string" || typeof step.status !== "string" || typeof step.startedAt !== "string") return null;
+  if (step.provider !== "git" && step.provider !== "jules" && step.provider !== "instance") return null;
+  if (!["running", "completed", "waiting_approval", "failed", "skipped"].includes(step.status)) return null;
+  const stringArray = Array.isArray(step.files) ? step.files.filter((item): item is string => typeof item === "string").slice(0, 20) : undefined;
+  return {
+    id: step.id,
+    provider: step.provider,
+    tool: step.tool,
+    title: step.title,
+    status: step.status as McpActivityStep["status"],
+    startedAt: step.startedAt,
+    ...(typeof step.completedAt === "string" ? { completedAt: step.completedAt } : {}),
+    ...(typeof step.repository === "string" ? { repository: step.repository } : {}),
+    ...(typeof step.ref === "string" ? { ref: step.ref } : {}),
+    ...(stringArray?.length ? { files: stringArray } : {}),
+    ...(typeof step.sessionLabel === "string" ? { sessionLabel: step.sessionLabel } : {}),
+    ...(typeof step.instanceName === "string" ? { instanceName: step.instanceName } : {}),
+    ...(typeof step.username === "string" ? { username: step.username } : {}),
+    ...(typeof step.host === "string" ? { host: step.host } : {}),
+    ...(typeof step.port === "number" ? { port: step.port } : {}),
+    ...(typeof step.command === "string" ? { command: step.command } : {}),
+    ...(typeof step.output === "string" ? { output: step.output } : {}),
+  };
 }
 
 function parseJulesFixProposal(value: unknown): JulesFixProposal | null {

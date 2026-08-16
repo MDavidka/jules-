@@ -3,6 +3,7 @@ import "server-only";
 const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
 const USER_AGENT = "jules-plus research reader";
 const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_RAW_FILE_CHARS = 200_000;
 const GITHUB_API_HEADERS: Record<string, string> = {
   Accept: "application/vnd.github+json",
   "User-Agent": "jules-plus",
@@ -293,14 +294,23 @@ export async function listRepositoryTree(source: string, limit = 400, accessToke
 }
 
 /** Reads a single file from a public repository, for step-by-step exploration. */
-export async function readRepositoryFile(source: string, path: string, accessToken?: string): Promise<string> {
+export async function readRepositoryFile(
+  source: string,
+  path: string,
+  accessToken?: string,
+  ref?: string,
+): Promise<string> {
   const repo = resolveGitHubRepo(source);
   if (!repo) return "No repository was selected.";
 
   const cleanPath = path.trim().replace(/^\/+/, "");
   if (!cleanPath || cleanPath.includes("..")) return `Invalid file path: ${path}`;
 
-  const branch = await resolveDefaultBranch(repo, accessToken);
+  const branch = ref?.trim() || await resolveDefaultBranch(repo, accessToken);
+  if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes("..")) {
+    return `Invalid Git ref: ${branch}`;
+  }
+
   const encodedPath = cleanPath.split("/").map(encodeURIComponent).join("/");
   const response = await fetchWithTimeout(
     `${GITHUB_RAW_BASE}/${repo.owner}/${repo.repo}/${encodeURIComponent(branch)}/${encodedPath}`,
@@ -308,8 +318,74 @@ export async function readRepositoryFile(source: string, path: string, accessTok
   );
   if (!response.ok) return `Could not read ${cleanPath} (${response.status}).`;
 
-  const content = (await response.text()).slice(0, 20000);
-  return JSON.stringify({ repository: `${repo.owner}/${repo.repo}`, branch, path: cleanPath, content }, null, 2);
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType && !/text\//i.test(contentType) && !/json|javascript|xml|yaml|toml/i.test(contentType)) {
+    return `Skipped ${cleanPath}: unsupported content type (${contentType}).`;
+  }
+
+  const content = (await response.text()).slice(0, MAX_RAW_FILE_CHARS);
+  return JSON.stringify({
+    repository: `${repo.owner}/${repo.repo}`,
+    ref: branch,
+    path: cleanPath,
+    source: "raw.githubusercontent.com",
+    truncated: content.length >= MAX_RAW_FILE_CHARS,
+    content,
+  }, null, 2);
+}
+
+export interface GitHubConnectionStatus {
+  connected: boolean;
+  login?: string;
+  name?: string | null;
+  scopes: string[];
+  canReadRepositories: boolean;
+  error?: string;
+}
+
+/** Validates the stored token against GitHub instead of treating token presence as connectivity. */
+export async function validateGitHubConnection(accessToken?: string): Promise<GitHubConnectionStatus> {
+  if (!accessToken?.trim()) {
+    return { connected: false, scopes: [], canReadRepositories: false, error: "No connected GitHub token is stored." };
+  }
+
+  try {
+    const response = await fetchWithTimeout("https://api.github.com/user", {
+      headers: githubHeaders(accessToken),
+      cache: "no-store",
+    });
+    const scopes = (response.headers.get("x-oauth-scopes") ?? "")
+      .split(",")
+      .map((scope) => scope.trim())
+      .filter(Boolean);
+
+    if (!response.ok) {
+      return {
+        connected: false,
+        scopes,
+        canReadRepositories: false,
+        error: response.status === 401 ? "GitHub rejected the connected token." : `GitHub account check failed (${response.status}).`,
+      };
+    }
+
+    const account = (await response.json()) as { login?: string; name?: string | null };
+    const canReadRepositories = scopes.includes("repo") || scopes.includes("public_repo") || scopes.includes("read:org");
+    return {
+      connected: Boolean(account.login),
+      login: account.login,
+      name: account.name ?? null,
+      scopes,
+      canReadRepositories,
+      ...(!canReadRepositories ? { error: "The connected GitHub account has no repository-read scope." } : {}),
+    };
+  } catch (error) {
+    return {
+      connected: false,
+      scopes: [],
+      canReadRepositories: false,
+      error: error instanceof Error ? error.message : "GitHub account check failed.",
+    };
+  }
 }
 
 async function resolveDefaultBranch(repo: ResolvedRepo, accessToken?: string): Promise<string> {

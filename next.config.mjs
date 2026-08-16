@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  serverExternalPackages: ["mongoose"],
+  serverExternalPackages: ["mongoose", "ssh2"],
   experimental: {
     // Keep server-only modules out of any client bundle.
     optimizePackageImports: ["lucide-react"],

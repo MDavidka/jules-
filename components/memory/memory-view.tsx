@@ -51,6 +51,18 @@ export function MemoryView({ selectedSource }: MemoryViewProps) {
   const notes = memoryQuery.data?.items ?? [];
   const [focusedNoteId, setFocusedNoteId] = React.useState<string | null>(null);
 
+  const handleDeleteNote = React.useCallback((id: string) => {
+    deleteMemory.mutate(id, {
+      onSuccess: () => toast({ title: "Memory deleted", variant: "success" }),
+      onError: (error) =>
+        toast({
+          title: "Could not delete",
+          description: errorMessage(error),
+          variant: "error",
+        }),
+    });
+  }, [deleteMemory, toast]);
+
   // Selecting a board card scrolls its row into view and highlights it.
   React.useEffect(() => {
     if (!focusedNoteId) return;
@@ -78,7 +90,11 @@ export function MemoryView({ selectedSource }: MemoryViewProps) {
       {memoryQuery.isPending ? (
         <Skeleton className="h-52 rounded-3xl" />
       ) : (
-        <MemoryBoard notes={notes} onSelectNote={setFocusedNoteId} />
+        <MemoryBoard
+          notes={notes}
+          onSelectNote={setFocusedNoteId}
+          onDeleteNote={handleDeleteNote}
+        />
       )}
 
       <p className="text-sm leading-relaxed text-muted-foreground">
@@ -200,17 +216,7 @@ export function MemoryView({ selectedSource }: MemoryViewProps) {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    deleteMemory.mutate(note.id, {
-                      onSuccess: () => toast({ title: "Memory deleted", variant: "success" }),
-                      onError: (error) =>
-                        toast({
-                          title: "Could not delete",
-                          description: errorMessage(error),
-                          variant: "error",
-                        }),
-                    })
-                  }
+                  onClick={() => handleDeleteNote(note.id)}
                   className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Trash2 className="h-4 w-4" aria-hidden="true" />

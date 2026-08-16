@@ -29,7 +29,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "memory", label: "Memory", icon: Workflow },
   { id: "automations", label: "Automations", icon: Clock3 },
   { id: "dashboard", label: "Sessions", icon: House },
-  { id: "checks", label: "SSH / Checks", icon: SquareTerminal },
+  { id: "checks", label: "Instances", icon: SquareTerminal },
 ];
 
 export const VIEW_TITLES: Record<ViewId, string> = {
@@ -38,7 +38,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   repositories: "Repositories",
   automations: "Automations",
   dashboard: "Sessions",
-  checks: "SSH / Checks",
+  checks: "Instances",
   settings: "Settings",
   session: "Session",
 };

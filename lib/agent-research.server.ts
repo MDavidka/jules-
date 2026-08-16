@@ -8,8 +8,8 @@ import { rateLimitedFetch } from "@/lib/rate-limiter.server";
 import type { AgentActivity } from "@/lib/agent-activity";
 
 /** Hard ceiling on tool-calling rounds, so a confused model cannot loop forever. */
-const MAX_STEPS = 4;
-const MAX_TOOL_CALLS_PER_STEP = 2;
+const MAX_STEPS = 8;
+const MAX_TOOL_CALLS_PER_STEP = 3;
 const STEP_TIMEOUT_MS = 25_000;
 
 const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
@@ -17,7 +17,13 @@ const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
   read_web_page: "reading",
   list_repository_files: "inspecting",
   read_repository_file: "inspecting",
+  githubgetfile: "inspecting",
   inspect_repository: "inspecting",
+  validate_github_connection: "inspecting",
+  ssh_execute_command: "working",
+  ssh_write_file: "working",
+  mcpsshconnect: "working",
+  mcpsshexec: "working",
 };
 
 /** OpenAI-compatible tool definitions advertised to the model. */
@@ -73,14 +79,76 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "read_repository_file",
-      description: "Read one file from a public GitHub repository.",
+      description: "Read one exact raw file from a public GitHub repository. For compatibility, incoming githubgetfile calls with filePath are also accepted.",
       parameters: {
         type: "object",
         properties: {
           repository: { type: "string", description: "A GitHub URL, `owner/repo`, or a Jules source name." },
           path: { type: "string", description: "Repository-relative file path." },
+          ref: { type: "string", description: "Optional branch, tag, or commit SHA. Defaults to the repository default branch." },
         },
         required: ["repository", "path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "validate_github_connection",
+      description: "Validate the connected GitHub account and confirm it has repository-read capability before private-repository investigation.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcpsshconnect",
+      description: "Connect to a saved VPS instance and verify SSH access before a multi-step task.",
+      parameters: { type: "object", properties: { instanceId: { type: "string", description: "Saved SSH instance ID." } }, required: ["instanceId"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcpsshexec",
+      description: "Execute a command on a saved VPS instance. Critical commands return a pending approval request.",
+      parameters: {
+        type: "object",
+        properties: { instanceId: { type: "string" }, command: { type: "string" }, runAsRoot: { type: "boolean" } },
+        required: ["instanceId", "command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ssh_execute_command",
+      description: "Execute a command on a saved SSH instance. Read-only commands may run immediately; privileged or destructive commands return a pending approval request.",
+      parameters: {
+        type: "object",
+        properties: {
+          instanceId: { type: "string", description: "Saved SSH instance ID." },
+          command: { type: "string", description: "Command to execute." },
+          runAsRoot: { type: "boolean", description: "Request root privileges; critical actions require approval." },
+        },
+        required: ["instanceId", "command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ssh_write_file",
+      description: "Request a complete file replacement on a saved SSH instance. Always requires explicit approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          instanceId: { type: "string", description: "Saved SSH instance ID." },
+          path: { type: "string", description: "Absolute remote file path." },
+          content: { type: "string", description: "Complete replacement file content." },
+          runAsRoot: { type: "boolean", description: "Request root privileges." },
+        },
+        required: ["instanceId", "path", "content"],
       },
     },
   },
@@ -148,9 +216,11 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
       role: "system",
       content: [
         "You are the research stage of a coding assistant.",
-        "Investigate the user's request using the provided tools before anyone answers.",
-        "Work in small steps: list repository files before reading them, and search the web before reading a page.",
+        "Answer directly when no remote inspection is needed. Use the provided tools only when the request requires evidence or an SSH operation.",
+        "Work in small steps: validate the connected GitHub account when repository access matters, list repository files before reading them, and search the web before reading a page.",
+        "When checking code, use read_repository_file to retrieve exact raw file content. For SSH work, use only saved instance IDs; never ask for or repeat passwords, and treat pending approval as a hard stop until the user approves it.",
         source ? `The user's currently selected repository is: ${source}` : "",
+        "For VPS requests, continue through a bounded multi-step workflow when each next step depends on the previous result. Stop immediately on a pending approval response, an error, or after the step budget.",
         "When you have enough evidence, stop calling tools and reply with concise bullet-point findings.",
         "Include concrete file paths, versions, commands, and URLs you actually saw. Never invent details.",
       ]
@@ -261,9 +331,24 @@ async function executeTool(
       return searchWeb(asString(input.query));
     case "read_web_page":
       return readWebPage(asString(input.url));
+    case "ssh_execute_command":
+    case "ssh_write_file":
+    case "mcpsshconnect":
+    case "mcpsshexec":
+      return callRepositoryMcpTool(name, input);
     case "list_repository_files":
     case "read_repository_file":
+    case "githubgetfile":
     case "inspect_repository":
+    case "validate_github_connection":
+      if (name === "validate_github_connection") return callRepositoryMcpTool(name, {});
+      if (name === "githubgetfile") {
+        return callRepositoryMcpTool("githubgetfile", {
+          repository,
+          filePath: asString(input.filePath) || asString(input.path),
+          ...(typeof input.ref === "string" ? { ref: input.ref } : {}),
+        });
+      }
       return callRepositoryMcpTool(name, { ...input, repository });
     default:
       return `Unknown tool: ${name || "(unnamed)"}.`;

@@ -94,8 +94,34 @@ export const createSessionSchema = z.object({
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 
 /* -------------------------------------------------------------------------- */
-/*                              Repository checks                             */
+/*                              SSH operations                               */
 /* -------------------------------------------------------------------------- */
+
+export const sshInstanceSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  host: z.string().trim().min(1).max(255),
+  port: z.coerce.number().int().min(1).max(65535).default(22),
+  username: z.string().trim().min(1).max(120).default("root"),
+  password: z.string().min(1).max(1000),
+});
+
+export const sshActionSchema = z.object({
+  instanceId: z.string().trim().min(1).max(100),
+  kind: z.enum(["command", "write_file"]),
+  command: z.string().max(10000).optional(),
+  path: z.string().max(2000).optional(),
+  content: z.string().max(200000).optional(),
+  runAsRoot: z.boolean().default(false),
+});
+
+export const sshApprovalSchema = z.object({
+  approved: z.boolean(),
+});
+
+/* -------------------------------------------------------------------------- */
+/*                            Repository checks                               */
+/* -------------------------------------------------------------------------- */
+
 
 export const CHECK_COMMANDS = ["test", "typecheck", "lint", "build"] as const;
 

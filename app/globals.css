@@ -45,7 +45,8 @@
   }
 
   html {
-    /* Prevent iOS text-size adjustment on orientation change. */
+    /* Keep the interface slightly denser while preserving browser zoom behavior. */
+    font-size: 95%;
     -webkit-text-size-adjust: 100%;
   }
 

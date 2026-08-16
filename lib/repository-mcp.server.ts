@@ -6,10 +6,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 
 import { loadConnectedGitHubToken } from "@/lib/github-token.server";
+import { createSshAction } from "@/lib/ssh.server";
 import {
   inspectPublicRepository,
   listRepositoryTree,
   readRepositoryFile,
+  validateGitHubConnection,
 } from "@/lib/nvidia-tools.server";
 
 const SERVER_INFO = { name: "jules-plus-github", version: "1.0.0" };
@@ -17,19 +19,36 @@ const REPOSITORY_TOOLS = new Set([
   "inspect_repository",
   "list_repository_files",
   "read_repository_file",
+  "githubgetfile",
+  "validate_github_connection",
+  "ssh_execute_command",
+  "ssh_write_file",
+  "mcpsshconnect",
+  "mcpsshexec",
 ]);
 
 /**
- * Creates the repository MCP server used by the assistant. The server exposes
- * only read-only GitHub tools; it never executes commands from a repository or
- * accepts arbitrary URLs. The connected OAuth token is kept inside the server
- * callback and is never passed through the model or returned to the client.
+ * Creates the MCP server used by the assistant. GitHub tools are read-only;
+ * SSH tools operate only on explicitly saved instances and queue critical work
+ * for approval before execution. Secrets never pass through the model.
  */
 function createRepositoryMcpServer(accessToken: string | null) {
   const server = new McpServer(SERVER_INFO, {
     instructions:
-      "Read-only GitHub repository context. List files before reading a file, and use repository-relative paths.",
+      "GitHub context is read-only. SSH actions target saved instances only. Read-only commands may run directly; privileged commands and file edits must remain pending until explicitly approved.",
   });
+
+  server.registerTool(
+    "validate_github_connection",
+    {
+      title: "Validate connected GitHub account",
+      description: "Verify the connected GitHub token with GitHub and report the account login and repository-read capability.",
+      inputSchema: {},
+    },
+    async () => ({
+      content: [{ type: "text", text: JSON.stringify(await validateGitHubConnection(accessToken ?? undefined), null, 2) }],
+    }),
+  );
 
   server.registerTool(
     "inspect_repository",
@@ -59,6 +78,22 @@ function createRepositoryMcpServer(accessToken: string | null) {
   );
 
   server.registerTool(
+    "githubgetfile",
+    {
+      title: "Read GitHub raw file (compatibility)",
+      description: "Compatibility alias for reading exact repository file content using the githubgetfile schema.",
+      inputSchema: {
+        repository: z.string().min(1).max(500),
+        filePath: z.string().min(1).max(500),
+        ref: z.string().min(1).max(200).optional(),
+      },
+    },
+    async ({ repository, filePath, ref }) => ({
+      content: [{ type: "text", text: await readRepositoryFile(repository, filePath, accessToken ?? undefined, ref) }],
+    }),
+  );
+
+  server.registerTool(
     "read_repository_file",
     {
       title: "Read GitHub repository file",
@@ -66,10 +101,72 @@ function createRepositoryMcpServer(accessToken: string | null) {
       inputSchema: {
         repository: z.string().min(1).max(500),
         path: z.string().min(1).max(500),
+        ref: z.string().min(1).max(200).optional(),
       },
     },
-    async ({ repository, path }) => ({
-      content: [{ type: "text", text: await readRepositoryFile(repository, path, accessToken ?? undefined) }],
+    async ({ repository, path, ref }) => ({
+      content: [{ type: "text", text: await readRepositoryFile(repository, path, accessToken ?? undefined, ref) }],
+    }),
+  );
+
+  server.registerTool(
+    "mcpsshconnect",
+    {
+      title: "Connect to VPS instance",
+      description: "Verify SSH access to a saved VPS instance before a multi-step task.",
+      inputSchema: { instanceId: z.string().min(1).max(100) },
+    },
+    async ({ instanceId }) => ({
+      content: [{ type: "text", text: JSON.stringify(await createSshAction({ instanceId, kind: "command", command: "printf connected" }), null, 2) }],
+    }),
+  );
+
+  server.registerTool(
+    "mcpsshexec",
+    {
+      title: "Execute VPS command",
+      description: "Execute a command on a saved VPS instance. Critical commands return a pending approval request.",
+      inputSchema: {
+        instanceId: z.string().min(1).max(100),
+        command: z.string().min(1).max(10000),
+        runAsRoot: z.boolean().optional(),
+      },
+    },
+    async ({ instanceId, command, runAsRoot }) => ({
+      content: [{ type: "text", text: JSON.stringify(await createSshAction({ instanceId, kind: "command", command, runAsRoot: runAsRoot === true }), null, 2) }],
+    }),
+  );
+
+  server.registerTool(
+    "ssh_execute_command",
+    {
+      title: "Execute an SSH command",
+      description: "Run a command on a saved SSH instance. Privileged or destructive commands return a pending approval request.",
+      inputSchema: {
+        instanceId: z.string().min(1).max(100),
+        command: z.string().min(1).max(10000),
+        runAsRoot: z.boolean().optional(),
+      },
+    },
+    async ({ instanceId, command, runAsRoot }) => ({
+      content: [{ type: "text", text: JSON.stringify(await createSshAction({ instanceId, kind: "command", command, runAsRoot: runAsRoot === true }), null, 2) }],
+    }),
+  );
+
+  server.registerTool(
+    "ssh_write_file",
+    {
+      title: "Write a remote file",
+      description: "Request a full file replacement on a saved SSH instance. Always requires explicit approval.",
+      inputSchema: {
+        instanceId: z.string().min(1).max(100),
+        path: z.string().startsWith("/").max(2000),
+        content: z.string().max(200000),
+        runAsRoot: z.boolean().optional(),
+      },
+    },
+    async ({ instanceId, path, content, runAsRoot }) => ({
+      content: [{ type: "text", text: JSON.stringify(await createSshAction({ instanceId, kind: "write_file", path, content, runAsRoot: runAsRoot === true }), null, 2) }],
     }),
   );
 
@@ -88,7 +185,7 @@ export async function callRepositoryMcpTool(
 ): Promise<string> {
   if (!REPOSITORY_TOOLS.has(name)) return `Unknown repository MCP tool: ${name}.`;
 
-  const accessToken = await loadConnectedGitHubToken();
+  const accessToken = name.startsWith("ssh_") ? null : await loadConnectedGitHubToken();
   const server = createRepositoryMcpServer(accessToken);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "jules-plus-agent", version: "1.0.0" });
