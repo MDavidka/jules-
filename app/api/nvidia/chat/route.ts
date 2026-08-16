@@ -128,10 +128,10 @@ export async function POST(request: Request) {
           sendStatus("thinking");
 
           let sshInstancesContext = "";
-          const sshInstanceMeta = new Map<string, { name: string; username: string; host: string; port: number }>();
+          const sshInstanceMeta = new Map<string, SshInstanceMeta>();
           try {
             const sshInstances = await listSshInstances();
-            for (const instance of sshInstances) sshInstanceMeta.set(instance.id, { name: instance.name, username: instance.username, host: instance.host, port: instance.port });
+            for (const instance of sshInstances) sshInstanceMeta.set(instance.id, { name: instance.name, username: instance.username, host: instance.host, port: instance.port, instanceType: instance.instanceType });
             if (sshInstances.length > 0) {
               sshInstancesContext = `Available VPS instances for agent operations:\n${sshInstances.map((instance) => `- instanceId=${instance.id}; name=${instance.name}; target=${instance.username}@${instance.host}:${instance.port}`).join("\n")}\nUse only these instance IDs. Passwords are stored server-side and are never available to the model.`;
             }
@@ -505,7 +505,16 @@ function shouldOfferJulesFix(prompt: string, source: string) {
   );
 }
 
-function normalizeMcpStep(step: { tool: string; input: Record<string, unknown>; output: string }, index: number, instances: Map<string, { name: string; username: string; host: string; port: number }>) {
+/** Instance details the timeline needs to label a step and pick its OS logo. */
+interface SshInstanceMeta {
+  name: string;
+  username: string;
+  host: string;
+  port: number;
+  instanceType: string;
+}
+
+function normalizeMcpStep(step: { tool: string; input: Record<string, unknown>; output: string }, index: number, instances: Map<string, SshInstanceMeta>) {
   const tool = step.tool;
   const provider = tool.includes("ssh") || tool.startsWith("mcp") && tool.includes("ssh") ? "instance" : tool.includes("jules") || tool.includes("session") ? "jules" : "git";
   const input = sanitizeMcpInput(step.input);
@@ -523,7 +532,7 @@ function normalizeMcpStep(step: { tool: string; input: Record<string, unknown>; 
     repository,
     ...(path ? { files: [path] } : {}),
     ...(typeof step.input.ref === "string" ? { ref: step.input.ref } : {}),
-    ...(instance ? { instanceName: instance.name, username: instance.username, host: instance.host, port: instance.port } : {}),
+    ...(instance ? { instanceName: instance.name, username: instance.username, host: instance.host, port: instance.port, instanceType: instance.instanceType } : {}),
     ...(typeof step.input.command === "string" ? { command: step.input.command.slice(0, 800) } : {}),
     output: step.output.slice(0, 1600),
     input,

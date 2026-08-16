@@ -4,6 +4,7 @@ import { Client } from "ssh2";
 import { randomUUID } from "node:crypto";
 
 import { decryptSecret, encryptSecret } from "@/lib/crypto.server";
+import { normalizeInstanceType, type InstanceType } from "@/lib/instance-types";
 import {
   connectToDatabase,
   SshApproval,
@@ -24,6 +25,8 @@ export interface SshInstanceSummary {
   host: string;
   port: number;
   username: string;
+  /** Canonical operating system family, e.g. "ubuntu" or "almalinux". */
+  instanceType: InstanceType;
   lastConnectedAt: string | null;
   createdAt: string;
 }
@@ -44,6 +47,7 @@ export function serializeSshInstance(instance: SshInstanceDoc): SshInstanceSumma
     host: instance.host,
     port: instance.port,
     username: instance.username,
+    instanceType: normalizeInstanceType(instance.instanceType),
     lastConnectedAt: instance.lastConnectedAt?.toISOString() ?? null,
     createdAt: instance.createdAt.toISOString(),
   };
@@ -60,6 +64,7 @@ export async function createSshInstance(input: {
   host: string;
   port?: number;
   username?: string;
+  instanceType?: string;
   password: string;
 }) {
   await connectToDatabase();
@@ -70,6 +75,7 @@ export async function createSshInstance(input: {
     host: input.host.trim(),
     port: input.port ?? 22,
     username: input.username?.trim() || "root",
+    instanceType: normalizeInstanceType(input.instanceType),
     passwordEncrypted: encrypted.ciphertext,
     passwordIv: encrypted.iv,
     passwordAuthTag: encrypted.authTag,
