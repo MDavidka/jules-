@@ -240,13 +240,17 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
       if (!choice) break;
 
       let toolCalls = (choice.message?.tool_calls ?? []).slice(0, MAX_TOOL_CALLS_PER_STEP);
+      let usedLegacyToolProtocol = false;
 
       // Some compatible models ignore the OpenAI tools field and emit the
-      // legacy DSML protocol in content. Convert it into the same structured
-      // calls used by the normal tool loop instead of exposing it to users.
+      // legacy DSML/DMSL protocol in content. Convert it into the same
+      // structured calls used by the normal tool loop instead of exposing it.
       if (toolCalls.length === 0 && typeof choice.message?.content === "string") {
         const legacy = parseLegacyDsmlToolCalls(choice.message.content);
-        if (legacy.length > 0) toolCalls = legacy;
+        if (legacy.length > 0) {
+          toolCalls = legacy;
+          usedLegacyToolProtocol = true;
+        }
       }
 
       // No tool calls means the model is done researching.
@@ -257,7 +261,9 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
 
       messages.push({
         role: "assistant",
-        content: choice.message?.content ?? null,
+        // Do not send provider-specific protocol markup back as assistant
+        // content once it has been normalized into structured tool calls.
+        content: usedLegacyToolProtocol ? null : choice.message?.content ?? null,
         tool_calls: toolCalls,
       });
 
@@ -277,6 +283,11 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
           name,
           content: output.slice(0, 12000),
         });
+
+        // Approval is a user interaction boundary. Never let the model issue
+        // more VM commands while the critical action is still pending.
+        if (isPendingSshApproval(name, output)) return formatFindings("", steps);
+
       }
     }
 
@@ -404,20 +415,26 @@ function parseArguments(raw: string | undefined): Record<string, unknown> {
 
 function parseLegacyDsmlToolCalls(content: string): ToolCall[] {
   const calls: ToolCall[] = [];
-  const block = /<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\b([^>]*)>([\s\S]*?)(?:<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\s*>|(?=<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\b)|$)/gi;
+  // NVIDIA-compatible models have used both DSML and DMSL spellings and may
+  // wrap invoke blocks in a toolcalls envelope. Matching invoke tags directly
+  // makes the parser tolerant of those wrappers without executing arbitrary
+  // text that is not a registered tool name.
+  const marker = "D(?:SM|MS)L";
+  const block = new RegExp(`<\\s*\\/?\\s*\\|?\\s*${marker}\\s*\\|?\\s*\\/?\\s*invoke\\b([^>]*)>([\\s\\S]*?)(?=<\\s*\\/?\\s*\\|?\\s*${marker}\\s*\\|?\\s*\\/?\\s*invoke\\b|$)`, "gi");
   let match: RegExpExecArray | null;
 
   while ((match = block.exec(content)) && calls.length < MAX_TOOL_CALLS_PER_STEP) {
-    const name = (match[1] ?? "").match(/\bname\s*=\s*["']([^"']+)["']/i)?.[1];
+    const rawName = (match[1] ?? "").match(/\bname\s*=\s*["']([^"']+)["']/i)?.[1];
+    const name = rawName?.replace(/^functions\./i, "").trim();
     if (!name) continue;
 
     const input: Record<string, unknown> = {};
-    const parameter = /<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\s+name\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)(?:<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\s*>|(?=<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\b)|$)/gi;
+    const parameter = new RegExp(`<\\s*\\/?\\s*\\|?\\s*${marker}\\s*\\|?\\s*\\/?\\s*parameter\\s+name\\s*=\\s*["']([^"']+)["'][^>]*>([\\s\\S]*?)(?=<\\s*\\/?\\s*\\|?\\s*${marker}\\s*\\|?\\s*\\/?\\s*parameter\\b|$)`, "gi");
     let parameterMatch: RegExpExecArray | null;
     while ((parameterMatch = parameter.exec(match[2] ?? ""))) {
       const key = parameterMatch[1]?.trim();
       if (!key) continue;
-      input[key] = (parameterMatch[2] ?? "").replace(/<[^>]+>/g, "").trim();
+      input[key] = decodeXml((parameterMatch[2] ?? "").replace(/<[^>]+>/g, "").trim());
     }
 
     calls.push({
@@ -428,9 +445,29 @@ function parseLegacyDsmlToolCalls(content: string): ToolCall[] {
   return calls;
 }
 
+function decodeXml(value: string) {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&");
+}
+
+function isPendingSshApproval(name: string, output: string) {
+  if (!name.includes("ssh")) return false;
+  try {
+    const parsed = JSON.parse(output) as { status?: unknown };
+    if (parsed && typeof parsed === "object" && parsed.status === "pending") return true;
+  } catch {
+    // Some MCP adapters return a human-readable status instead of JSON.
+  }
+  return /pending\s+(?:ssh\s+)?approval/i.test(output);
+}
+
 function stripDsmlProtocol(content: string): string {
   return content
-    .replace(/<\s*\|?\s*DSML\b[\s\S]*$/gi, "")
+    .replace(/<\s*\|?\s*D(?:SM|MS)L\b[\s\S]*$/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
