@@ -568,7 +568,10 @@ function sanitizeMcpInput(input: Record<string, unknown>) {
 }
 
 function shouldRunDeepResearch(prompt: string) {
-  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through|ssh|vm|vps|server|instance|online|offline|reachable|connectivity|ping|terminal|shell|command|deploy|deployment|restart|service|process|logs?)\b/i.test(prompt);
+  // Operational requests must enter the structured tool loop first. Otherwise
+  // the final chat model may emit legacy DSML as ordinary text (for example,
+  // `install sarra`), which cannot execute MCP tools and must never reach the UI.
+  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through|ssh|vm|vps|server|instance|online|offline|reachable|connectivity|ping|terminal|shell|command|deploy|deployment|restart|service|process|logs?|install|uninstall|upgrade|configure|setup|set\s+up|sarra|modify|edit|write|remove|delete|create|execute|run)\b/i.test(prompt);
 }
 
 /** Avoid blocking ordinary answers with repository work unless the user asks for it. */
