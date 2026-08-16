@@ -429,6 +429,35 @@ function truncate(value: string, max: number): string {
   return `${collapsed.slice(0, max - 1).trimEnd()}…`;
 }
 
+/**
+ * Removes leaked model-tool protocol markup from text returned by Jules.
+ *
+ * Some upstream responses contain a DSML tool-call block intended for the
+ * model/runtime, not for the session transcript. The block can arrive with
+ * whitespace inserted between its delimiters, and it can be incomplete while
+ * the upstream activity is still being assembled, so both complete blocks and
+ * an unterminated block are handled here before the text reaches the UI.
+ */
+export function sanitizeActivityText(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const openingMarker = /<\s*\|?\s*DSML\b/i;
+  if (!openingMarker.test(value)) return value;
+
+  const toolBlock = /<\s*\|?\s*DSML\s*\|?\s*toolcalls?\s*>[\s\S]*?(?:<\s*\/\s*\|?\s*DSML\s*\|?\s*toolcalls?\s*>|<\s*\|?\s*DSML\s*\|?\s*\/\s*toolcalls?\s*>)/gi;
+  let sanitized = value.replace(toolBlock, "");
+
+  // Streaming/incomplete activities may not contain a closing marker yet.
+  // Drop the partial protocol payload rather than exposing its internals.
+  if (openingMarker.test(sanitized)) {
+    sanitized = sanitized.slice(0, sanitized.search(openingMarker));
+  }
+
+  return sanitized
+    .replace(/\n{3,}/g, "\n\n")
+    .trim() || null;
+}
+
 export function normalizeSession(session: JulesSession): NormalizedSession {
   const state: SessionState = session.state ?? "STATE_UNSPECIFIED";
   const name = session.name ?? "";
@@ -474,11 +503,11 @@ export function normalizeActivity(activity: JulesActivity): NormalizedActivity {
   if (activity.agentMessaged) {
     kind = "agentMessaged";
     title = "Jules";
-    body = activity.agentMessaged.agentMessage ?? null;
+    body = sanitizeActivityText(activity.agentMessaged.agentMessage);
   } else if (activity.userMessaged) {
     kind = "userMessaged";
     title = "You";
-    body = activity.userMessaged.userMessage ?? null;
+    body = sanitizeActivityText(activity.userMessaged.userMessage);
   } else if (activity.planGenerated) {
     kind = "planGenerated";
     title = "Plan generated";
@@ -489,14 +518,14 @@ export function normalizeActivity(activity: JulesActivity): NormalizedActivity {
   } else if (activity.progressUpdated) {
     kind = "progressUpdated";
     title = activity.progressUpdated.title?.trim() || "Progress update";
-    body = activity.progressUpdated.description ?? null;
+    body = sanitizeActivityText(activity.progressUpdated.description);
   } else if (activity.sessionCompleted) {
     kind = "sessionCompleted";
     title = "Session completed";
   } else if (activity.sessionFailed) {
     kind = "sessionFailed";
     title = "Session failed";
-    body = activity.sessionFailed.reason ?? null;
+    body = sanitizeActivityText(activity.sessionFailed.reason);
   }
 
   return {
@@ -509,7 +538,7 @@ export function normalizeActivity(activity: JulesActivity): NormalizedActivity {
     originator: activity.originator ?? null,
     plan: activity.planGenerated?.plan ?? null,
     planId: activity.planApproved?.planId ?? null,
-    failureReason: activity.sessionFailed?.reason ?? null,
+    failureReason: sanitizeActivityText(activity.sessionFailed?.reason),
     artifacts: activity.artifacts ?? [],
   };
 }
