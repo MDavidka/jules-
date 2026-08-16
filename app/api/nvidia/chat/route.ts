@@ -175,6 +175,14 @@ export async function POST(request: Request) {
                     prompt: scopedPrompt,
                     source: repository,
                     onActivity: sendStatus,
+                    onStep: (step) => send({
+                      type: "mcp_step",
+                      step: {
+                        tool: step.tool,
+                        input: sanitizeMcpInput(step.input),
+                        output: step.output.slice(0, 1600),
+                      },
+                    }),
                   }),
                 };
               }),
@@ -479,6 +487,14 @@ function shouldOfferJulesFix(prompt: string, source: string) {
     source.startsWith("sources/github/") &&
     /\b(fix|repair|resolve|patch|implement|apply|modify|change)\b/i.test(prompt),
   );
+}
+
+function sanitizeMcpInput(input: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(input).map(([key, value]) => {
+    if (key === "content") return [key, "[file content withheld from activity log]"];
+    if (typeof value === "string") return [key, value.slice(0, 500)];
+    return [key, value];
+  }));
 }
 
 function shouldRunDeepResearch(prompt: string) {

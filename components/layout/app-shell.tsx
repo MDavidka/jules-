@@ -61,10 +61,17 @@ export function AppShell() {
 
 const LAST_SELECTED_SOURCE_KEY = "jules-plus:last-selected-source";
 
+type McpStep = {
+  tool: string;
+  input: Record<string, unknown>;
+  output: string;
+};
+
 type AssistantMessage = {
   role: "user" | "assistant";
   content: string;
   julesProposal?: JulesFixProposal;
+  mcpSteps?: McpStep[];
 };
 
 function ConfiguredApp() {
@@ -239,7 +246,7 @@ function ConfiguredApp() {
         const trimmed = line.trim();
         if (!trimmed) return;
 
-        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown };
+        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown; step?: unknown };
         try {
           event = JSON.parse(trimmed);
         } catch {
@@ -250,6 +257,20 @@ function ConfiguredApp() {
           case "status":
             if (isAgentActivity(event.activity)) setAssistantActivity(event.activity);
             break;
+          case "mcp_step": {
+            const step = parseMcpStep(event.step);
+            if (step) {
+              setAssistantMessages((current) => {
+                const next = [...current];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  next[next.length - 1] = { ...last, mcpSteps: [...(last.mcpSteps ?? []), step] };
+                }
+                return next;
+              });
+            }
+            break;
+          }
           case "token":
             if (typeof event.value === "string" && event.value) {
               receivedContent = true;
@@ -483,6 +504,7 @@ function NewTaskView({
             >
               {message.role === "assistant" ? (
                 <>
+                  {message.mcpSteps?.length ? <McpStepTimeline steps={message.mcpSteps} /> : null}
                   {message.content ? <MarkdownContent>{message.content}</MarkdownContent> : null}
                   {message.julesProposal ? (
                     <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
@@ -498,6 +520,30 @@ function NewTaskView({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function parseMcpStep(value: unknown): McpStep | null {
+  if (!value || typeof value !== "object") return null;
+  const step = value as Record<string, unknown>;
+  if (typeof step.tool !== "string" || typeof step.output !== "string" || !step.input || typeof step.input !== "object") return null;
+  return { tool: step.tool, input: step.input as Record<string, unknown>, output: step.output };
+}
+
+function McpStepTimeline({ steps }: { steps: McpStep[] }) {
+  return (
+    <div className="mb-3 space-y-2 border-l border-sky-400/30 pl-3" aria-label="MCP activity">
+      {steps.map((step, index) => {
+        const label = step.tool.replace(/^mcp/, "MCP ").replace(/_/g, " ");
+        const target = typeof step.input.instanceId === "string" ? step.input.instanceId : "saved instance";
+        return (
+          <details key={`${step.tool}-${index}`} className="group rounded-xl border border-sky-400/20 bg-sky-400/[0.06] px-3 py-2 text-xs text-muted-foreground" open={index === steps.length - 1}>
+            <summary className="flex cursor-pointer list-none items-center gap-2 font-medium text-sky-200"><span className="h-1.5 w-1.5 rounded-full bg-sky-300" />Step {index + 1}: {label}<span className="ml-auto text-[10px] text-muted-foreground/70">{target}</span></summary>
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/20 p-2 font-mono text-[11px] leading-5 text-muted-foreground">{step.output}</pre>
+          </details>
+        );
+      })}
     </div>
   );
 }

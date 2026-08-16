@@ -22,6 +22,8 @@ const TOOL_ACTIVITIES: Record<string, AgentActivity> = {
   validate_github_connection: "inspecting",
   ssh_execute_command: "working",
   ssh_write_file: "working",
+  mcpsshconnect: "working",
+  mcpsshexec: "working",
 };
 
 /** OpenAI-compatible tool definitions advertised to the model. */
@@ -95,6 +97,26 @@ const TOOL_DEFINITIONS = [
       name: "validate_github_connection",
       description: "Validate the connected GitHub account and confirm it has repository-read capability before private-repository investigation.",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcpsshconnect",
+      description: "Connect to a saved VPS instance and verify SSH access before a multi-step task.",
+      parameters: { type: "object", properties: { instanceId: { type: "string", description: "Saved SSH instance ID." } }, required: ["instanceId"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcpsshexec",
+      description: "Execute a command on a saved VPS instance. Critical commands return a pending approval request.",
+      parameters: {
+        type: "object",
+        properties: { instanceId: { type: "string" }, command: { type: "string" }, runAsRoot: { type: "boolean" } },
+        required: ["instanceId", "command"],
+      },
     },
   },
   {
@@ -311,6 +333,8 @@ async function executeTool(
       return readWebPage(asString(input.url));
     case "ssh_execute_command":
     case "ssh_write_file":
+    case "mcpsshconnect":
+    case "mcpsshexec":
       return callRepositoryMcpTool(name, input);
     case "list_repository_files":
     case "read_repository_file":

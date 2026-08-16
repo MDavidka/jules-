@@ -23,6 +23,8 @@ const REPOSITORY_TOOLS = new Set([
   "validate_github_connection",
   "ssh_execute_command",
   "ssh_write_file",
+  "mcpsshconnect",
+  "mcpsshexec",
 ]);
 
 /**
@@ -104,6 +106,34 @@ function createRepositoryMcpServer(accessToken: string | null) {
     },
     async ({ repository, path, ref }) => ({
       content: [{ type: "text", text: await readRepositoryFile(repository, path, accessToken ?? undefined, ref) }],
+    }),
+  );
+
+  server.registerTool(
+    "mcpsshconnect",
+    {
+      title: "Connect to VPS instance",
+      description: "Verify SSH access to a saved VPS instance before a multi-step task.",
+      inputSchema: { instanceId: z.string().min(1).max(100) },
+    },
+    async ({ instanceId }) => ({
+      content: [{ type: "text", text: JSON.stringify(await createSshAction({ instanceId, kind: "command", command: "printf connected" }), null, 2) }],
+    }),
+  );
+
+  server.registerTool(
+    "mcpsshexec",
+    {
+      title: "Execute VPS command",
+      description: "Execute a command on a saved VPS instance. Critical commands return a pending approval request.",
+      inputSchema: {
+        instanceId: z.string().min(1).max(100),
+        command: z.string().min(1).max(10000),
+        runAsRoot: z.boolean().optional(),
+      },
+    },
+    async ({ instanceId, command, runAsRoot }) => ({
+      content: [{ type: "text", text: JSON.stringify(await createSshAction({ instanceId, kind: "command", command, runAsRoot: runAsRoot === true }), null, 2) }],
     }),
   );
 
