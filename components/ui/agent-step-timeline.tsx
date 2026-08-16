@@ -29,6 +29,8 @@ export interface AgentStep {
   sessionLabel?: string;
   /** instance: the SSH target and the command that ran on it. */
   instanceName?: string;
+  /** Pending SSH action identifier, present when approval is required. */
+  actionId?: string;
   instanceType?: string;
   username?: string;
   host?: string;
@@ -102,6 +104,8 @@ export function AgentStepTimeline({ startedAt, steps, active, title, className }
 function AgentStepRow({ step }: { step: AgentStep }) {
   const [showOutput, setShowOutput] = React.useState(false);
   const [showAllFiles, setShowAllFiles] = React.useState(false);
+  const [approvalState, setApprovalState] = React.useState<"idle" | "submitting" | "approved" | "rejected" | "error">("idle");
+  const [approvalOutput, setApprovalOutput] = React.useState<string | null>(null);
 
   const status = statusMeta(step.status);
   const subtitle = stepSubtitle(step);
@@ -113,6 +117,26 @@ function AgentStepRow({ step }: { step: AgentStep }) {
   // provider keeps raw tool output tucked away, and failures explain themselves.
   const isReasoning = step.provider === "thinking";
   const outputOpen = showOutput || step.status === "failed";
+  const canApprove = step.provider === "instance" && step.status === "waiting_approval" && Boolean(step.actionId) && approvalState === "idle";
+
+  const decideApproval = async (approved: boolean) => {
+    if (!step.actionId || approvalState !== "idle") return;
+    setApprovalState("submitting");
+    try {
+      const response = await fetch(`/api/ssh/actions/${encodeURIComponent(step.actionId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved }),
+      });
+      const result = await response.json().catch(() => null) as { status?: string; output?: string; errorOutput?: string; message?: string } | null;
+      if (!response.ok) throw new Error(result?.message || "The approval request failed.");
+      setApprovalState(result?.status === "rejected" ? "rejected" : "approved");
+      setApprovalOutput(result?.output || result?.errorOutput || (approved ? "Action completed." : "Action rejected."));
+    } catch (error) {
+      setApprovalState("error");
+      setApprovalOutput(error instanceof Error ? error.message : "The approval request failed.");
+    }
+  };
 
   return (
     <li className="relative">
@@ -137,6 +161,17 @@ function AgentStepRow({ step }: { step: AgentStep }) {
           <span className="sr-only">{status.screenReaderLabel}</span>
         )}
       </div>
+
+      {canApprove ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => void decideApproval(true)} className="rounded-full bg-amber-300 px-3 py-1 text-[11px] font-semibold text-black hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Approve and run</button>
+          <button type="button" onClick={() => void decideApproval(false)} className="rounded-full bg-secondary px-3 py-1 text-[11px] font-semibold text-foreground hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Deny</button>
+        </div>
+      ) : null}
+
+      {approvalState !== "idle" && approvalOutput ? (
+        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-xl bg-black/25 px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground break-anywhere scrollbar-thin">{approvalOutput}</pre>
+      ) : null}
 
       {subtitle ? (
         <p className="mt-1.5 truncate text-[13px] text-muted-foreground">

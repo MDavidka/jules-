@@ -530,6 +530,13 @@ function normalizeMcpStep(step: { tool: string; input: Record<string, unknown>; 
   const tool = step.tool;
   const provider = tool.includes("ssh") || tool.startsWith("mcp") && tool.includes("ssh") ? "instance" : tool.includes("jules") || tool.includes("session") ? "jules" : "git";
   const input = sanitizeMcpInput(step.input);
+  let actionResult: { actionId?: string; status?: string; output?: string; errorOutput?: string } = {};
+  try {
+    const parsed = JSON.parse(step.output) as unknown;
+    if (parsed && typeof parsed === "object") actionResult = parsed as typeof actionResult;
+  } catch {
+    // Non-JSON repository/tool output is still displayed as ordinary output.
+  }
   const instance = typeof step.input.instanceId === "string" ? instances.get(step.input.instanceId) : undefined;
   const repository = typeof step.input.repository === "string" ? step.input.repository.replace(/^sources\/github\//, "") : undefined;
   const path = typeof step.input.path === "string" ? step.input.path : typeof step.input.filePath === "string" ? step.input.filePath : undefined;
@@ -539,14 +546,15 @@ function normalizeMcpStep(step: { tool: string; input: Record<string, unknown>; 
     provider,
     tool,
     title,
-    status: /pending approval|approval/i.test(step.output) ? "waiting_approval" : /failed|error|unknown tool/i.test(step.output) ? "failed" : "completed",
+    status: actionResult.status === "pending" || /pending approval|approval/i.test(step.output) ? "waiting_approval" : actionResult.status === "failed" || /failed|error|unknown tool/i.test(step.output) ? "failed" : "completed",
     startedAt: new Date().toISOString(),
     repository,
     ...(path ? { files: [path] } : {}),
     ...(typeof step.input.ref === "string" ? { ref: step.input.ref } : {}),
     ...(instance ? { instanceName: instance.name, username: instance.username, host: instance.host, port: instance.port, instanceType: instance.instanceType } : {}),
     ...(typeof step.input.command === "string" ? { command: step.input.command.slice(0, 800) } : {}),
-    output: step.output.slice(0, 1600),
+    ...(actionResult.actionId ? { actionId: actionResult.actionId } : {}),
+    output: (actionResult.output || actionResult.errorOutput || step.output).slice(0, 1600),
     input,
   };
 }
