@@ -239,11 +239,19 @@ export async function runDeepResearch(options: DeepResearchOptions): Promise<str
       const choice = await requestCompletion({ apiKey, model, messages });
       if (!choice) break;
 
-      const toolCalls = (choice.message?.tool_calls ?? []).slice(0, MAX_TOOL_CALLS_PER_STEP);
+      let toolCalls = (choice.message?.tool_calls ?? []).slice(0, MAX_TOOL_CALLS_PER_STEP);
+
+      // Some compatible models ignore the OpenAI tools field and emit the
+      // legacy DSML protocol in content. Convert it into the same structured
+      // calls used by the normal tool loop instead of exposing it to users.
+      if (toolCalls.length === 0 && typeof choice.message?.content === "string") {
+        const legacy = parseLegacyDsmlToolCalls(choice.message.content);
+        if (legacy.length > 0) toolCalls = legacy;
+      }
 
       // No tool calls means the model is done researching.
       if (toolCalls.length === 0) {
-        const findings = typeof choice.message?.content === "string" ? choice.message.content.trim() : "";
+        const findings = typeof choice.message?.content === "string" ? stripDsmlProtocol(choice.message.content).trim() : "";
         return formatFindings(findings, steps);
       }
 
@@ -392,6 +400,39 @@ function parseArguments(raw: string | undefined): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function parseLegacyDsmlToolCalls(content: string): ToolCall[] {
+  const calls: ToolCall[] = [];
+  const block = /<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\b([^>]*)>([\s\S]*?)(?:<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\s*>|(?=<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\b)|$)/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = block.exec(content)) && calls.length < MAX_TOOL_CALLS_PER_STEP) {
+    const name = (match[1] ?? "").match(/\bname\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (!name) continue;
+
+    const input: Record<string, unknown> = {};
+    const parameter = /<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\s+name\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)(?:<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\s*>|(?=<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\b)|$)/gi;
+    let parameterMatch: RegExpExecArray | null;
+    while ((parameterMatch = parameter.exec(match[2] ?? ""))) {
+      const key = parameterMatch[1]?.trim();
+      if (!key) continue;
+      input[key] = (parameterMatch[2] ?? "").replace(/<[^>]+>/g, "").trim();
+    }
+
+    calls.push({
+      id: `legacy-${calls.length + 1}`,
+      function: { name, arguments: JSON.stringify(input) },
+    });
+  }
+  return calls;
+}
+
+function stripDsmlProtocol(content: string): string {
+  return content
+    .replace(/<\s*\|?\s*DSML\b[\s\S]*$/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function asString(value: unknown) {

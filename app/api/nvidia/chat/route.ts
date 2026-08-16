@@ -11,6 +11,7 @@ import {
   listSessions,
   normalizeActivity,
   normalizeSession,
+  sanitizeActivityText,
 } from "@/lib/jules-client.server";
 import type { NormalizedActivity, NormalizedSession } from "@/types/jules";
 import { callRepositoryMcpTool } from "@/lib/repository-mcp.server";
@@ -297,6 +298,7 @@ export async function POST(request: Request) {
           let buffer = "";
           let emittedToken = false;
           let fullResponse = "";
+          let visibleResponse = "";
 
           const processLine = (line: string) => {
             if (!line.startsWith("data:")) return;
@@ -315,7 +317,7 @@ export async function POST(request: Request) {
             emittedToken = true;
             fullResponse += token;
             const visible = memoryFilter.push(token);
-            if (visible) send({ type: "token", value: visible });
+            if (visible) visibleResponse += visible;
           };
 
           while (true) {
@@ -330,8 +332,18 @@ export async function POST(request: Request) {
           if (buffer.trim()) processLine(buffer.trim());
 
           const trailing = memoryFilter.flush();
-          if (trailing) send({ type: "token", value: trailing });
+          if (trailing) visibleResponse += trailing;
           if (!emittedToken) throw new Error("The model returned an empty response.");
+
+          // Model providers occasionally emit their internal DSML tool protocol
+          // as ordinary text. Never stream that protocol to the transcript.
+          const cleanResponse = sanitizeActivityText(visibleResponse);
+          const hadDsml = /<\s*\/?\s*\|?\s*DSML\b/i.test(visibleResponse);
+          const answer = hadDsml && deepFindings.trim()
+            ? `I checked the available instance.\n\n${deepFindings.trim()}`
+            : cleanResponse || (deepFindings.trim() ? `I checked the available instance.\n\n${deepFindings.trim()}` : "I could not get a readable answer from the assistant.");
+          fullResponse = answer;
+          send({ type: "token", value: answer });
 
           // Emit jules_fix_proposal AFTER the response is fully streamed
           if (
@@ -548,7 +560,7 @@ function sanitizeMcpInput(input: Record<string, unknown>) {
 }
 
 function shouldRunDeepResearch(prompt: string) {
-  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through|ssh|vps|server|instance|terminal|shell|command|deploy|deployment|restart|service|process|logs?)\b/i.test(prompt);
+  return /\b(deep|research|search|web|documentation|docs|investigate|trace|analy[sz]e|explore|audit|walk through|ssh|vm|vps|server|instance|online|offline|reachable|connectivity|ping|terminal|shell|command|deploy|deployment|restart|service|process|logs?)\b/i.test(prompt);
 }
 
 /** Avoid blocking ordinary answers with repository work unless the user asks for it. */

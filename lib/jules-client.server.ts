@@ -441,10 +441,10 @@ function truncate(value: string, max: number): string {
 export function sanitizeActivityText(value: string | null | undefined): string | null {
   if (!value) return null;
 
-  const openingMarker = /<\s*\|?\s*DSML\b/i;
+  const openingMarker = /<\s*\/?\s*\|?\s*DSML\b/i;
   if (!openingMarker.test(value)) return value;
 
-  const toolBlock = /<\s*\|?\s*DSML\s*\|?\s*toolcalls?\s*>[\s\S]*?(?:<\s*\/\s*\|?\s*DSML\s*\|?\s*toolcalls?\s*>|<\s*\|?\s*DSML\s*\|?\s*\/\s*toolcalls?\s*>)/gi;
+  const toolBlock = /<\s*\/?\s*\|?\s*DSML\s*\|?\s*toolcalls?\s*>[\s\S]*?(?:<\s*\/\s*\|?\s*DSML\s*\|?\s*toolcalls?\s*>|<\s*\|?\s*DSML\s*\|?\s*\/\s*toolcalls?\s*>)/gi;
   let sanitized = value.replace(toolBlock, "");
 
   // Streaming/incomplete activities may not contain a closing marker yet.

@@ -1,0 +1,10 @@
+const content = `I'll check if your VM is online.\n< | DSML | toolcalls>\n< / DSML | invoke name="mcpsshexec">\n< / DSML | parameter name="instanceId" string="true">abc-123< / DSML | parameter>\n< / DSML | parameter name="command" string="true">echo "=== SSH Connection Test ==="; echo Connected< / DSML | parameter>\n< / DSML | invoke>`;
+const block = /<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\b([^>]*)>([\s\S]*?)(?:<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\s*>|(?=<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*invoke\b)|$)/gi;
+const parameter = /<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\s+name\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)(?:<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\s*>|(?=<\s*\/?\s*\|?\s*DSML\s*\|?\s*\/?\s*parameter\b)|$)/gi;
+const match = block.exec(content);
+if (!match || match[1].match(/name\s*=\s*["']([^"']+)["']/i)?.[1] !== "mcpsshexec") throw new Error("legacy invoke was not parsed");
+const input = {};
+let item;
+while ((item = parameter.exec(match[2]))) input[item[1]] = item[2].replace(/<[^>]+>/g, "").trim();
+if (input.instanceId !== "abc-123" || !input.command.includes("SSH Connection Test")) throw new Error("legacy parameters were not parsed");
+console.log("legacy DSML MCP regression check passed");
