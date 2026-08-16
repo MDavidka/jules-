@@ -21,6 +21,7 @@ import { JulesFixProposalCard, type JulesFixProposal } from "@/components/sessio
 import { TaskComposer, type AgentAttachment } from "@/components/sessions/task-composer";
 import { AgentActivityIndicator, isAgentActivity, type AgentActivity } from "@/components/ui/dot-matrix-loader";
 import { MarkdownContent } from "@/components/ui/markdown-content";
+import { McpSubagentTimeline, type McpActivityStep } from "@/components/ui/mcp-subagent-timeline";
 import { SettingsView } from "@/components/settings/settings-view";
 import { SetupGate } from "@/components/setup/setup-gate";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -61,17 +62,12 @@ export function AppShell() {
 
 const LAST_SELECTED_SOURCE_KEY = "jules-plus:last-selected-source";
 
-type McpStep = {
-  tool: string;
-  input: Record<string, unknown>;
-  output: string;
-};
-
 type AssistantMessage = {
   role: "user" | "assistant";
   content: string;
   julesProposal?: JulesFixProposal;
-  mcpSteps?: McpStep[];
+  mcpSteps?: McpActivityStep[];
+  mcpStartedAt?: string;
 };
 
 function ConfiguredApp() {
@@ -246,7 +242,7 @@ function ConfiguredApp() {
         const trimmed = line.trim();
         if (!trimmed) return;
 
-        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown; step?: unknown };
+        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown; step?: unknown; startedAt?: unknown };
         try {
           event = JSON.parse(trimmed);
         } catch {
@@ -257,6 +253,18 @@ function ConfiguredApp() {
           case "status":
             if (isAgentActivity(event.activity)) setAssistantActivity(event.activity);
             break;
+          case "session_started": {
+            const startedAt = typeof event.startedAt === "string" ? event.startedAt : null;
+            if (startedAt) {
+              setAssistantMessages((current) => {
+                const next = [...current];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") next[next.length - 1] = { ...last, mcpStartedAt: startedAt };
+                return next;
+              });
+            }
+            break;
+          }
           case "mcp_step": {
             const step = parseMcpStep(event.step);
             if (step) {
@@ -504,7 +512,7 @@ function NewTaskView({
             >
               {message.role === "assistant" ? (
                 <>
-                  {message.mcpSteps?.length ? <McpStepTimeline steps={message.mcpSteps} /> : null}
+                  {message.mcpSteps?.length ? <McpSubagentTimeline startedAt={message.mcpStartedAt ?? new Date().toISOString()} steps={message.mcpSteps} active={isStreaming && index === messages.length - 1} /> : null}
                   {message.content ? <MarkdownContent>{message.content}</MarkdownContent> : null}
                   {message.julesProposal ? (
                     <JulesFixProposalCard proposal={message.julesProposal} onSessionCreated={onSessionCreated} />
@@ -524,28 +532,32 @@ function NewTaskView({
   );
 }
 
-function parseMcpStep(value: unknown): McpStep | null {
+function parseMcpStep(value: unknown): McpActivityStep | null {
   if (!value || typeof value !== "object") return null;
   const step = value as Record<string, unknown>;
-  if (typeof step.tool !== "string" || typeof step.output !== "string" || !step.input || typeof step.input !== "object") return null;
-  return { tool: step.tool, input: step.input as Record<string, unknown>, output: step.output };
-}
-
-function McpStepTimeline({ steps }: { steps: McpStep[] }) {
-  return (
-    <div className="mb-3 space-y-2 border-l border-sky-400/30 pl-3" aria-label="MCP activity">
-      {steps.map((step, index) => {
-        const label = step.tool.replace(/^mcp/, "MCP ").replace(/_/g, " ");
-        const target = typeof step.input.instanceId === "string" ? step.input.instanceId : "saved instance";
-        return (
-          <details key={`${step.tool}-${index}`} className="group rounded-xl border border-sky-400/20 bg-sky-400/[0.06] px-3 py-2 text-xs text-muted-foreground" open={index === steps.length - 1}>
-            <summary className="flex cursor-pointer list-none items-center gap-2 font-medium text-sky-200"><span className="h-1.5 w-1.5 rounded-full bg-sky-300" />Step {index + 1}: {label}<span className="ml-auto text-[10px] text-muted-foreground/70">{target}</span></summary>
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/20 p-2 font-mono text-[11px] leading-5 text-muted-foreground">{step.output}</pre>
-          </details>
-        );
-      })}
-    </div>
-  );
+  if (typeof step.id !== "string" || typeof step.provider !== "string" || typeof step.tool !== "string" || typeof step.title !== "string" || typeof step.status !== "string" || typeof step.startedAt !== "string") return null;
+  if (step.provider !== "git" && step.provider !== "jules" && step.provider !== "instance") return null;
+  if (!["running", "completed", "waiting_approval", "failed", "skipped"].includes(step.status)) return null;
+  const stringArray = Array.isArray(step.files) ? step.files.filter((item): item is string => typeof item === "string").slice(0, 20) : undefined;
+  return {
+    id: step.id,
+    provider: step.provider,
+    tool: step.tool,
+    title: step.title,
+    status: step.status as McpActivityStep["status"],
+    startedAt: step.startedAt,
+    ...(typeof step.completedAt === "string" ? { completedAt: step.completedAt } : {}),
+    ...(typeof step.repository === "string" ? { repository: step.repository } : {}),
+    ...(typeof step.ref === "string" ? { ref: step.ref } : {}),
+    ...(stringArray?.length ? { files: stringArray } : {}),
+    ...(typeof step.sessionLabel === "string" ? { sessionLabel: step.sessionLabel } : {}),
+    ...(typeof step.instanceName === "string" ? { instanceName: step.instanceName } : {}),
+    ...(typeof step.username === "string" ? { username: step.username } : {}),
+    ...(typeof step.host === "string" ? { host: step.host } : {}),
+    ...(typeof step.port === "number" ? { port: step.port } : {}),
+    ...(typeof step.command === "string" ? { command: step.command } : {}),
+    ...(typeof step.output === "string" ? { output: step.output } : {}),
+  };
 }
 
 function parseJulesFixProposal(value: unknown): JulesFixProposal | null {

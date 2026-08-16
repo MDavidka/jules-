@@ -122,11 +122,16 @@ export async function POST(request: Request) {
         const sendStatus = (activity: AgentActivity) => send({ type: "status", activity });
 
         try {
+          const sessionStartedAt = new Date().toISOString();
+          let mcpStepIndex = 0;
+          send({ type: "session_started", startedAt: sessionStartedAt });
           sendStatus("thinking");
 
           let sshInstancesContext = "";
+          const sshInstanceMeta = new Map<string, { name: string; username: string; host: string; port: number }>();
           try {
             const sshInstances = await listSshInstances();
+            for (const instance of sshInstances) sshInstanceMeta.set(instance.id, { name: instance.name, username: instance.username, host: instance.host, port: instance.port });
             if (sshInstances.length > 0) {
               sshInstancesContext = `Available VPS instances for agent operations:\n${sshInstances.map((instance) => `- instanceId=${instance.id}; name=${instance.name}; target=${instance.username}@${instance.host}:${instance.port}`).join("\n")}\nUse only these instance IDs. Passwords are stored server-side and are never available to the model.`;
             }
@@ -175,14 +180,10 @@ export async function POST(request: Request) {
                     prompt: scopedPrompt,
                     source: repository,
                     onActivity: sendStatus,
-                    onStep: (step) => send({
-                      type: "mcp_step",
-                      step: {
-                        tool: step.tool,
-                        input: sanitizeMcpInput(step.input),
-                        output: step.output.slice(0, 1600),
-                      },
-                    }),
+                    onStep: (step) => {
+                      const normalized = normalizeMcpStep(step, ++mcpStepIndex, sshInstanceMeta);
+                      send({ type: "mcp_step", step: normalized });
+                    },
                   }),
                 };
               }),
@@ -196,6 +197,21 @@ export async function POST(request: Request) {
           const julesSessionContext = source
             ? await collectRecentJulesSessionContext(repositoryInputs)
             : "";
+          if (julesSessionContext) {
+            send({
+              type: "mcp_step",
+              step: {
+                id: `jules-${++mcpStepIndex}`,
+                provider: "jules",
+                tool: "jules_session_context",
+                title: "working on Jules task",
+                status: "completed",
+                startedAt: sessionStartedAt,
+                sessionLabel: "Loaded recent Jules session context",
+                output: "Jules session history is available to the assistant.",
+              },
+            });
+          }
 
           sendStatus("working");
 
@@ -487,6 +503,31 @@ function shouldOfferJulesFix(prompt: string, source: string) {
     source.startsWith("sources/github/") &&
     /\b(fix|repair|resolve|patch|implement|apply|modify|change)\b/i.test(prompt),
   );
+}
+
+function normalizeMcpStep(step: { tool: string; input: Record<string, unknown>; output: string }, index: number, instances: Map<string, { name: string; username: string; host: string; port: number }>) {
+  const tool = step.tool;
+  const provider = tool.includes("ssh") || tool.startsWith("mcp") && tool.includes("ssh") ? "instance" : tool.includes("jules") || tool.includes("session") ? "jules" : "git";
+  const input = sanitizeMcpInput(step.input);
+  const instance = typeof step.input.instanceId === "string" ? instances.get(step.input.instanceId) : undefined;
+  const repository = typeof step.input.repository === "string" ? step.input.repository.replace(/^sources\/github\//, "") : undefined;
+  const path = typeof step.input.path === "string" ? step.input.path : typeof step.input.filePath === "string" ? step.input.filePath : undefined;
+  const title = provider === "instance" ? (tool.includes("connect") ? "connecting to instance" : "running command on instances") : provider === "jules" ? "working on Jules task" : "working on repository";
+  return {
+    id: `${index}-${tool}`,
+    provider,
+    tool,
+    title,
+    status: /pending approval|approval/i.test(step.output) ? "waiting_approval" : /failed|error|unknown tool/i.test(step.output) ? "failed" : "completed",
+    startedAt: new Date().toISOString(),
+    repository,
+    ...(path ? { files: [path] } : {}),
+    ...(typeof step.input.ref === "string" ? { ref: step.input.ref } : {}),
+    ...(instance ? { instanceName: instance.name, username: instance.username, host: instance.host, port: instance.port } : {}),
+    ...(typeof step.input.command === "string" ? { command: step.input.command.slice(0, 800) } : {}),
+    output: step.output.slice(0, 1600),
+    input,
+  };
 }
 
 function sanitizeMcpInput(input: Record<string, unknown>) {
