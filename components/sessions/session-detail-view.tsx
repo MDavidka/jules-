@@ -13,7 +13,7 @@ import { useToast } from "@/components/ui/toast";
 import { useActivities, useApprovePlan, useSendMessage, useSession } from "@/hooks/use-sessions";
 import { DEFAULT_NVIDIA_MODEL_ID, NVIDIA_MODELS } from "@/lib/nvidia-models";
 import { buildSessionSteps, liveStep } from "@/lib/session-steps";
-import { errorMessage, formatAbsoluteTime, sessionStateLabel } from "@/lib/utils";
+import { cn, errorMessage, formatAbsoluteTime, sessionStateLabel } from "@/lib/utils";
 
 interface SessionDetailViewProps {
   sessionName: string;
@@ -113,22 +113,21 @@ export function SessionDetailView({ sessionName, enabled }: SessionDetailViewPro
           </p>
         </div>
 
-        {session.pullRequestUrl ? (
-          <a
-            href={session.pullRequestUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={
-              session.pullRequestTitle
-                ? `View pull request: ${session.pullRequestTitle}`
-                : "View pull request"
-            }
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
-            PR
-          </a>
-        ) : null}
+  <a
+  href={session.pullRequestUrl ?? undefined}
+  target="_blank"
+  rel="noopener noreferrer"
+  aria-disabled={!session.pullRequestUrl}
+  onClick={(event) => { if (!session.pullRequestUrl) event.preventDefault(); }}
+  aria-label={session.pullRequestUrl ? (session.pullRequestTitle ? `View pull request: ${session.pullRequestTitle}` : "View pull request") : "Pull request not available yet"}
+  className={cn(
+  "sticky top-4 inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+  session.pullRequestUrl ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25" : "cursor-not-allowed border-border bg-muted text-muted-foreground",
+  )}
+  >
+  <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+  {session.pullRequestUrl ? "PR" : "No PR yet"}
+  </a>
       </header>
 
       {session.prompt ? (

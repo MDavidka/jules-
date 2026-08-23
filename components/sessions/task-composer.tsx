@@ -72,6 +72,10 @@ export function TaskComposer({
   const [showGithubDropdown, setShowGithubDropdown] = React.useState(false);
   const [githubSearch, setGithubSearch] = React.useState("");
   const [selectedResearchRepositories, setSelectedResearchRepositories] = React.useState<string[]>([]);
+  const [refineProgress, setRefineProgress] = React.useState(0);
+  const [isRefining, setIsRefining] = React.useState(false);
+  const refineTimerRef = React.useRef<number | null>(null);
+  const refineStartedRef = React.useRef<number | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
@@ -176,6 +180,41 @@ export function TaskComposer({
   };
 
   const clearGithubSelection = () => setSelectedResearchRepositories([]);
+
+  const cancelRefinement = React.useCallback(() => {
+    if (refineTimerRef.current !== null) window.clearInterval(refineTimerRef.current);
+    refineTimerRef.current = null;
+    refineStartedRef.current = null;
+    setRefineProgress(0);
+    setIsRefining(false);
+  }, []);
+
+  const startRefinement = React.useCallback(() => {
+    if (!prompt.trim() || disabled || isSubmitting || isRefining) return;
+    refineStartedRef.current = Date.now();
+    setIsRefining(true);
+    setRefineProgress(0);
+    refineTimerRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - (refineStartedRef.current ?? Date.now());
+      setRefineProgress(Math.min(100, (elapsed / 5000) * 100));
+      if (elapsed >= 5000) {
+        cancelRefinement();
+        void (async () => {
+          try {
+            const response = await fetch("/api/nvidia/refine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, model }) });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data?.error ?? "Prompt refinement failed.");
+            setPrompt(data.prompt);
+            toast({ title: "Prompt refined", description: "Your improved prompt is ready to send.", variant: "success" });
+          } catch (error) {
+            toast({ title: "Could not refine prompt", description: errorMessage(error), variant: "error" });
+          }
+        })();
+      }
+    }, 50);
+  }, [cancelRefinement, disabled, isRefining, isSubmitting, model, prompt, toast]);
+
+  React.useEffect(() => () => cancelRefinement(), [cancelRefinement]);
 
   const branches = source?.branches ?? [];
   const effectiveBranch = branch ?? source?.defaultBranch ?? null;
@@ -550,8 +589,17 @@ export function TaskComposer({
             <span className="sr-only">Attach files or images</span>
           </button>
 
-          <Select value={model} onValueChange={onModelChange} disabled={disabled || modelDisabled}>
-            <SelectTrigger aria-label="Model" className="h-10 min-h-10 w-auto max-w-[13rem] gap-1.5 rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
+          <div
+            className="relative shrink-0"
+            onPointerDown={() => startRefinement()}
+            onPointerUp={() => cancelRefinement()}
+            onPointerCancel={() => cancelRefinement()}
+            onPointerLeave={() => cancelRefinement()}
+            title={prompt.trim() ? "Hold for 5 seconds to refine prompt" : "Enter a prompt, then hold to refine"}
+          >
+            <Select value={model} onValueChange={onModelChange} disabled={disabled || modelDisabled || isRefining}>
+            <SelectTrigger aria-label="Model. Hold for five seconds to refine prompt" className="relative h-10 min-h-10 w-auto max-w-[13rem] gap-1.5 overflow-hidden rounded-full border-border/80 bg-transparent pl-3 pr-2.5 text-[13px] font-medium">
+              {isRefining ? <span className="absolute inset-y-0 left-0 bg-primary/20" style={{ width: `${refineProgress}%` }} aria-hidden="true" /> : null}
               {selectedModel ? <ModelIcon model={selectedModel} /> : null}
               <SelectValue placeholder="Select model" />
             </SelectTrigger>
@@ -571,7 +619,9 @@ export function TaskComposer({
                 </SelectItem>
               ))}
             </SelectContent>
-          </Select>
+            </Select>
+            {isRefining ? <span className="sr-only" aria-live="polite">Refining prompt {Math.round(refineProgress)} percent</span> : null}
+          </div>
 
           <div className="ml-auto flex items-center gap-1">
             <button
