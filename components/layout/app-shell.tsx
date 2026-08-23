@@ -28,7 +28,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useJulesConfig } from "@/hooks/use-jules-config";
 import { useMemory } from "@/hooks/use-memory";
-import { useSessions } from "@/hooks/use-sessions";
+import { useCreateSession, useSessions } from "@/hooks/use-sessions";
 import { useSource, useSources } from "@/hooks/use-sources";
 import { ApiError, queryKeys } from "@/lib/api-client";
 import { cn, errorMessage } from "@/lib/utils";
@@ -182,168 +182,19 @@ function ConfiguredApp() {
     setActiveView("session");
   };
 
-  const handleSubmitTask = async (
-    prompt: string,
-    attachments: AgentAttachment[],
-    researchRepositories: string[],
-  ) => {
-    const promptAttachment = attachments.find((attachment) => attachment.isPromptAttachment && attachment.content);
-    const displayPrompt = promptAttachment?.content?.trim() || prompt;
-    const memoryContext = pinnedNotes
-      .map((note) => {
-        const title = note.title?.trim() ? `${note.title.trim()}: ` : "";
-        const data = note.data && Object.keys(note.data).length > 0 ? ` Data: ${JSON.stringify(note.data)}` : "";
-        return `- ${title}${note.content.trim()}${data}`;
-      })
-      .join("\n");
-    setAssistantPending(true);
-    setMemorySaveError(null);
-    setAssistantActivity("thinking");
-    setAssistantMessages((current) => [...current, { role: "user", content: displayPrompt }, { role: "assistant", content: "" }]);
+  const createSession = useCreateSession();
 
-    try {
-      const response = await fetch("/api/nvidia/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          model: model || DEFAULT_NVIDIA_MODEL_ID,
-          source: selectedSource?.name ?? selectedSourceName,
-          branch: branch ?? selectedSource?.defaultBranch ?? undefined,
-          memoryContext,
-          attachments,
-          researchRepositories,
-          history: assistantMessages,
-        }),
-      });
-      if (!response.ok || !response.body) {
-        const data = await response.json().catch(() => null);
-        throw new Error(data?.error ?? data?.message ?? "Assistant request failed.");
-      }
-
-      const appendToken = (token: string) => {
-        setAssistantMessages((current) => {
-          const next = [...current];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token };
-          return next;
-        });
-      };
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let receivedContent = false;
-      let savedMemoryCount = 0;
-      let streamError: string | null = null;
-
-      // The route streams newline-delimited JSON events, not raw text.
-      const handleEvent = (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-
-        let event: { type?: string; value?: unknown; activity?: unknown; message?: unknown; saved?: unknown; proposal?: unknown; step?: unknown; startedAt?: unknown };
-        try {
-          event = JSON.parse(trimmed);
-        } catch {
-          return;
-        }
-
-        switch (event.type) {
-          case "status":
-            if (isAgentActivity(event.activity)) setAssistantActivity(event.activity);
-            break;
-          case "session_started": {
-            const startedAt = typeof event.startedAt === "string" ? event.startedAt : null;
-            if (startedAt) {
-              setAssistantMessages((current) => {
-                const next = [...current];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant") next[next.length - 1] = { ...last, mcpStartedAt: startedAt };
-                return next;
-              });
-            }
-            break;
-          }
-          case "mcp_step": {
-            const step = parseMcpStep(event.step);
-            if (step) {
-              setAssistantMessages((current) => {
-                const next = [...current];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant") {
-                  next[next.length - 1] = { ...last, mcpSteps: [...(last.mcpSteps ?? []), step] };
-                }
-                return next;
-              });
-            }
-            break;
-          }
-          case "token":
-            if (typeof event.value === "string" && event.value) {
-              receivedContent = true;
-              appendToken(event.value);
-            }
-            break;
-          case "memory":
-            if (typeof event.saved === "number") savedMemoryCount += event.saved;
-            break;
-          case "memory_error":
-            setMemorySaveError(typeof event.message === "string" ? event.message : "Memory could not be saved.");
-            break;
-          case "jules_fix_proposal": {
-            const proposal = parseJulesFixProposal(event.proposal);
-            if (proposal) {
-              setAssistantMessages((current) => {
-                const next = [...current];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant") next[next.length - 1] = { ...last, julesProposal: proposal };
-                return next;
-              });
-            }
-            break;
-          }
-          case "done":
-            setAssistantActivity("done");
-            break;
-          case "error":
-            streamError = typeof event.message === "string" ? event.message : "The assistant request failed.";
-            break;
-          default:
-            break;
-        }
-      };
-
-      while (true) {
-        const result = await reader.read();
-        if (result.done) break;
-        buffer += decoder.decode(result.value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) handleEvent(line);
-      }
-      buffer += decoder.decode();
-      if (buffer) handleEvent(buffer);
-
-      if (streamError) throw new Error(streamError);
-      if (!receivedContent) throw new Error("The assistant returned an empty response. Try a smaller image or a different prompt.");
-
-      // Refresh the memory board when the assistant stored new cards.
-      if (savedMemoryCount > 0) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.memory });
-      }
-    } catch (error) {
-      setAssistantMessages((current) => {
-        const next = [...current];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant" && !last.content.trim()) next.pop();
-        return next;
-      });
-      throw error;
-    } finally {
-      setAssistantPending(false);
-    }
-  };
+  // handleOpenSession is intentionally kept outside this callback because it owns view navigation state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleSubmitTask = React.useCallback(async (prompt: string, _attachments?: AgentAttachment[], _researchRepositories?: string[]) => {
+    const nextBranch = branch ?? selectedSource?.defaultBranch ?? undefined;
+    const created = await createSession.mutateAsync({
+      prompt,
+      source: selectedSource?.name ?? selectedSourceName ?? "",
+      ...(nextBranch ? { branch: nextBranch } : {}),
+    });
+    handleOpenSession(created.session.name);
+  }, [branch, createSession, handleOpenSession, selectedSource, selectedSourceName]);
 
   const handleApprovalComplete = React.useCallback((step: AgentStep, result: { status: string; output?: string; errorOutput?: string }) => {
     setAssistantMessages((current) => current.map((message) => ({
